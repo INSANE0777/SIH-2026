@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SwaraKavach — Voice Integrity Console</title>
+<style>
+  :root{--bg:#0a0e14;--panel:#11161f;--line:#1e2733;--txt:#c9d4e3;--dim:#5b6b80;--ok:#2ecc71;--mid:#f1c40f;--high:#e67e22;--crit:#e74c3c;--acc:#3b82f6}
+  *{box-sizing:border-box;margin:0;padding:0;font-family:'Segoe UI',system-ui,sans-serif}
+  body{background:var(--bg);color:var(--txt);min-height:100vh;display:flex;flex-direction:column}
+  header{display:flex;align-items:center;gap:14px;padding:14px 22px;border-bottom:1px solid var(--line)}
+  header h1{font-size:18px;letter-spacing:.5px}
+  header h1 span{color:var(--acc)}
+  .badge{font-size:11px;background:#1a2332;border:1px solid var(--line);padding:3px 10px;border-radius:12px;color:var(--dim)}
+  .dot{width:9px;height:9px;border-radius:50%;background:var(--crit);margin-left:auto}
+  .dot.on{background:var(--ok);box-shadow:0 0 8px var(--ok)}
+  main{display:grid;grid-template-columns:340px 1fr 360px;gap:14px;padding:14px 22px;flex:1}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px}
+  .panel h2{font-size:12px;text-transform:uppercase;letter-spacing:1.5px;color:var(--dim);margin-bottom:12px}
+  button{background:#182234;color:var(--txt);border:1px solid #263144;padding:9px 14px;border-radius:8px;cursor:pointer;font-size:13px}
+  button:hover{background:#1f2c44;border-color:var(--acc)}
+  button.rec{background:#3a1520;border-color:#5c1f2e;color:#ff9d9d}
+  input[type=text]{background:#0d131d;border:1px solid var(--line);color:var(--txt);padding:8px 10px;border-radius:8px;width:100%;font-size:13px}
+  .row{display:flex;gap:8px;margin-bottom:10px}
+  .gauge-wrap{display:flex;flex-direction:column;align-items:center;padding:8px 0}
+  .level{font-size:26px;font-weight:700;letter-spacing:2px;margin-top:10px}
+  .lvl-LOW{color:var(--ok)} .lvl-MID{color:var(--mid)} .lvl-HIGH{color:var(--high)} .lvl-CRITICAL{color:var(--crit)}
+  .actions{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;margin-top:12px;min-height:26px}
+  .action{font-size:11px;padding:4px 10px;border-radius:12px;border:1px solid}
+  .a-HOLD_TRANSACTION{color:var(--crit);border-color:var(--crit)}
+  .a-SUPERVISOR_ALERT,.a-INCIDENT_WEBHOOK{color:var(--high);border-color:var(--high)}
+  .a-LIVENESS_CHALLENGE{color:var(--mid);border-color:var(--mid)}
+  .a-CAUTION_PROMPT,.a-STEP_UP_MFA{color:var(--dim);border-color:var(--dim)}
+  .layers{margin-top:14px}
+  .layer{margin-bottom:10px}
+  .layer .t{display:flex;justify-content:space-between;font-size:12px;color:var(--dim);margin-bottom:4px}
+  .bar{height:8px;background:#0d131d;border-radius:4px;overflow:hidden}
+  .bar i{display:block;height:100%;width:0%;border-radius:4px;background:linear-gradient(90deg,var(--ok),var(--mid),var(--crit));transition:width .3s}
+  #log{font-family:Consolas,monospace;font-size:11.5px;height:520px;overflow-y:auto;display:flex;flex-direction:column-reverse}
+  .ev{padding:6px 8px;border-bottom:1px solid #151d29;white-space:pre-wrap}
+  .ev .t{color:var(--dim)}
+  canvas{width:100%;height:110px;margin-top:14px}
+  .hint{font-size:11px;color:var(--dim);margin-top:8px;line-height:1.5}
+  .status{font-size:11px;color:var(--dim);margin-top:10px;line-height:1.7}
+  .status b{color:var(--txt)}
+  .final{margin-top:10px;padding:10px;border-radius:8px;background:#141c2a;display:none;font-size:12px;line-height:1.6}
+</style>
+</head>
+<body>
+<header>
+  <h1>Swara<span>Kavach</span> — Voice Integrity Console</h1>
+  <span class="badge">SIH 2026 · PS26104 · AICTE</span>
+  <div class="dot" id="conn"></div>
+</header>
+<main>
+  <section class="panel">
+    <h2>Call Channel</h2>
+    <div class="row"><button id="micBtn">🎙 Start Live Analysis</button></div>
+    <div class="row"><input type="text" id="speakerId" placeholder="speaker_id (e.g. regional_manager)"></div>
+    <div class="row"><button id="enrollBtn">Enroll Voiceprint (uploads file)</button>
+      <input type="file" id="enrollFile" accept="audio/*" hidden></div>
+    <div class="row"><button id="fileBtn">📁 Analyze Audio File</button>
+      <input type="file" id="audioFile" accept="audio/*" hidden></div>
+    <h2 style="margin-top:18px">Call Context</h2>
+    <div class="layer"><div class="t"><span>caller-ID match</span><span id="cCtx1">false</span></div><div class="bar"><i style="width:75%"></i></div></div>
+    <div class="layer"><div class="t"><span>transaction</span><span>₹50,00,000</span></div><div class="bar"><i style="width:75%"></i></div></div>
+    <div class="hint">Context feeds Detector D (metadata rules). Edit in <code>run_demo.py</code> / query params for other scenarios.</div>
+    <div class="status" id="health">connecting…</div>
+  </section>
+
+  <section class="panel">
+    <h2>Impersonation Risk</h2>
+    <div class="gauge-wrap">
+      <svg id="gauge" width="240" height="140" viewBox="0 0 240 140">
+        <path d="M 20 130 A 100 100 0 0 1 220 130" fill="none" stroke="#1a2332" stroke-width="16" stroke-linecap="round"/>
+        <path id="arc" d="M 20 130 A 100 100 0 0 1 220 130" fill="none" stroke="#2ecc71" stroke-width="16" stroke-linecap="round" stroke-dasharray="314" stroke-dashoffset="314"/>
+        <text id="riskTxt" x="120" y="105" text-anchor="middle" fill="#c9d4e3" font-size="34" font-weight="700">—</text>
+        <text x="120" y="126" text-anchor="middle" fill="#5b6b80" font-size="11">risk score</text>
+      </svg>
+      <div class="level" id="level">STANDBY</div>
+      <div class="actions" id="actions"></div>
+    </div>
+    <canvas id="spark" width="640" height="110"></canvas>
+    <div class="final" id="final"></div>
+  </section>
+
+  <section class="panel">
+    <h2>Layer Contributions</h2>
+    <div class="layers" id="layers">
+      <div class="layer" data-k="artifact"><div class="t"><span>A · Spectral artifacts (CNN)</span><span>—</span></div><div class="bar"><i></i></div></div>
+      <div class="layer" data-k="ssl"><div class="t"><span>B · SSL prosody (wav2vec2)</span><span>—</span></div><div class="bar"><i></i></div></div>
+      <div class="layer" data-k="speaker"><div class="t"><span>C · Speaker consistency</span><span>—</span></div><div class="bar"><i></i></div></div>
+      <div class="layer" data-k="context"><div class="t"><span>D · Call context rules</span><span>—</span></div><div class="bar"><i></i></div></div>
+    </div>
+    <h2 style="margin-top:18px">Event Log</h2>
+    <div id="log"></div>
+  </section>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+let ws=null, micCtx=null, proc=null, src=null, streaming=false;
+const traj=[];
+
+function connect(){
+  ws=new WebSocket(`ws://${location.host}/v1/stream?speaker_id=${encodeURIComponent($('speakerId').value||'')}&context=${encodeURIComponent(JSON.stringify({caller_id_match:'false',enrolled_contact:'true',tx_amount:5000000}))}`);
+  ws.binaryType='arraybuffer';
+  ws.onopen=()=>{$('conn').classList.add('on');log('connected — stream ready');};
+  ws.onclose=()=>{$('conn').classList.remove('on');if(streaming)stopMic();};
+  ws.onmessage=e=>{const m=JSON.parse(e.data); m.final?showFinal(m):onEvent(m);};
+}
+function log(s){const d=document.createElement('div');d.className='ev';d.innerHTML=`<span class="t">${new Date().toLocaleTimeString()}</span>  ${s}`;$('log').prepend(d);}
+
+function onEvent(m){
+  const r=m.risk;
+  $('riskTxt').textContent=r.toFixed(2);
+  $('level').textContent=m.level; $('level').className='level lvl-'+m.level;
+  const arc=$('arc'); const len=314*(1-r);
+  arc.setAttribute('stroke-dashoffset',len);
+  arc.setAttribute('stroke', m.level==='LOW'?'#2ecc71':m.level==='MID'?'#f1c40f':m.level==='HIGH'?'#e67e22':'#e74c3c');
+  $('actions').innerHTML=(m.actions||[]).map(a=>`<span class="action a-${a}">${a.replace(/_/g,' ')}</span>`).join('');
+  for(const k in (m.layers||{})){
+    const el=document.querySelector(`.layer[data-k=${k}]`); if(!el)continue;
+    const v=m.layers[k];
+    el.querySelector('.t span:last-child').textContent=v==null?'—':v.toFixed(2);
+    el.querySelector('.bar i').style.width=(v==null?0:v*100)+'%';
+  }
+  traj.push(r); drawSpark();
+  log(`chunk ${String(m.chunk).padStart(2,'0')}  risk=${r.toFixed(3)}  ${m.level}${(m.actions||[]).length?'  ⚠ '+m.actions.join(', '):''}`);
+}
+function showFinal(m){
+  const f=$('final'); f.style.display='block';
+  f.innerHTML=`<b>FINAL VERDICT</b> — level <b class="lvl-${m.level}">${m.level}</b> · final ${m.risk_final} · peak ${m.risk_peak}<br>actions: <b>${m.actions.join(', ')||'none'}</b> · session ${m.session_id}`;
+  log(`■ CALL COMPLETE — ${m.level} (${m.risk_final})`);
+}
+function drawSpark(){
+  const c=$('spark'),g=c.getContext('2d');
+  g.clearRect(0,0,c.width,c.height);
+  g.strokeStyle='#1e2733';[0.25,0.45,0.65].forEach(y=>{g.beginPath();g.moveTo(0,y*c.height);g.lineTo(c.width,y*c.height);g.stroke();});
+  if(traj.length<2)return;
+  g.strokeStyle='#3b82f6';g.lineWidth=2;g.beginPath();
+  traj.forEach((v,i)=>{const x=i/(traj.length-1)*c.width,y=(1-v)*c.height;i?g.lineTo(x,y):g.moveTo(x,y);});
+  g.stroke();
+}
+async function startMic(){
+  try{
+    micCtx=micCtx||new (window.AudioContext||window.webkitAudioContext)({sampleRate:16000});
+    const stream=await navigator.mediaDevices.getUserMedia({audio:{channelCount:1,echoCancellation:true,noiseSuppression:true}});
+    src=micCtx.createMediaStreamSource(stream);
+    proc=micCtx.createScriptProcessor(4096,1,1);
+    proc.onaudioprocess=e=>{
+      if(!streaming||!ws||ws.readyState!==1)return;
+      const d=e.inputBuffer.getChannelData(0);
+      const pcm=new Int16Array(d.length);
+      for(let i=0;i<d.length;i++)pcm[i]=Math.max(-32768,Math.min(32767,d[i]*32767));
+      ws.send(pcm.buffer);
+    };
+    src.connect(proc);proc.connect(micCtx.destination);
+    streaming=true;$('micBtn').textContent='⏹ Stop Live Analysis';$('micBtn').classList.add('rec');
+    traj.length=0;log('live analysis started');
+  }catch(err){log('mic error: '+err.message);}
+}
+function stopMic(){
+  streaming=false;
+  if(proc){proc.disconnect();proc=null;}
+  if(src){src.disconnect();src=null;}
+  if($('micBtn')){$('micBtn').textContent='🎙 Start Live Analysis';$('micBtn').classList.remove('rec');}
+  if(ws&&ws.readyState===1)ws.send('END');
+  log('live analysis stopped');
+}
+$('micBtn').onclick=()=>{ if(!ws||ws.readyState!==1){connect();setTimeout(()=>streaming?null:startMic(),400);return;} streaming?stopMic():startMic(); };
+$('enrollBtn').onclick=()=>$('enrollFile').click();
+$('enrollFile').onchange=async e=>{
+  const f=e.target.files[0]; if(!f)return;
+  const sid=$('speakerId').value.trim(); if(!sid){alert('enter speaker_id first');return;}
+  const r=await fetch(`/v1/enroll?speaker_id=${encodeURIComponent(sid)}`,{method:'POST',body:await f.arrayBuffer()});
+  log('enrolled: '+JSON.stringify(await r.json()));
+};
+$('fileBtn').onclick=()=>$('audioFile').click();
+$('audioFile').onchange=async e=>{
+  const f=e.target.files[0]; if(!f)return;
+  const sid=$('speakerId').value.trim();
+  const r=await fetch(`/v1/analyze?${sid?'speaker_id='+encodeURIComponent(sid)+'&':''}context=${encodeURIComponent(JSON.stringify({caller_id_match:'false',enrolled_contact:'true',tx_amount:5000000}))}`,{method:'POST',body:await f.arrayBuffer()});
+  const m=await r.json();
+  if(m.verdict)showFinal(m.verdict);else log(JSON.stringify(m));
+};
+fetch('/healthz').then(r=>r.json()).then(h=>{
+  $('health').innerHTML=`layer A (artifact CNN): <b>${h.layers.artifact?'ONLINE':'offline'}</b><br>layer B (wav2vec2): <b>${h.layers.ssl?'ONLINE':'offline'}</b><br>enrolled speakers: <b>${h.layers.speaker_enrollments}</b>`;
+}).catch(()=>{$('health').textContent='server offline — run: uvicorn swarakavach.server:app';});
+connect();
+</script>
+</body>
+</html>
