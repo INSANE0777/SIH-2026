@@ -7,6 +7,7 @@ EER = point where false-accept and false-reject rates cross (lower = better).
 """
 import argparse
 import csv
+from pathlib import Path
 
 import numpy as np
 
@@ -40,24 +41,39 @@ def main():
 
     with open(args.labels) as f:
         rows = list(csv.DictReader(f))
+    # per-class split: neural TTS attacks vs vocoder-proxy attacks — the proxy
+    # class is corpus training variety, not a claimed capability; report both.
+    def cls(r):
+        return "voc_proxy" if "voc_" in Path(r["path"]).name else "main"
 
     art, ssl, fused, ys = [], [], [], []
+    art_m, ssl_m, fused_m, ys_m = [], [], [], []   # main classes only
     for r in rows:
         wav = load_wav(r["path"])
         y = int(r["label"])
         a = artifact.score(wav)
         s = ssl_detector.score(wav)
-        lp = {"artifact": a, "ssl": s}
-        art.append(a if a is not None else 0.5)
-        ssl.append(s if s is not None else 0.5)
-        fused.append(fuse(lp))
+        row = (a, s, fuse({"artifact": a, "ssl": s}), y)
+        art.append(row[0] if row[0] is not None else 0.5)
+        ssl.append(row[1] if row[1] is not None else 0.5)
+        fused.append(row[2])
         ys.append(y)
+        if cls(r) == "main":
+            art_m.append(row[0] if row[0] is not None else 0.5)
+            ssl_m.append(row[1] if row[1] is not None else 0.5)
+            fused_m.append(row[2])
+            ys_m.append(y)
 
     ys = np.array(ys)
+    ys_m = np.array(ys_m)
     print(f"n={len(ys)}  (spoof={ys.sum()}, bonafide={len(ys)-ys.sum()})")
     print(f"EER artifact : {eer(np.array(art), ys):.4f}   [layer available: {artifact.available()}]")
     print(f"EER ssl      : {eer(np.array(ssl), ys):.4f}   [layer available: {ssl_detector.available()}]")
     print(f"EER fused    : {eer(np.array(fused), ys):.4f}")
+    print(f"-- excluding the vocoder-proxy class (real speech vs neural TTS only): --")
+    print(f"EER artifact : {eer(np.array(art_m), ys_m):.4f}")
+    print(f"EER ssl      : {eer(np.array(ssl_m), ys_m):.4f}")
+    print(f"EER fused    : {eer(np.array(fused_m), ys_m):.4f}")
 
 
 if __name__ == "__main__":

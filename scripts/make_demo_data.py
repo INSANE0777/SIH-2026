@@ -30,6 +30,10 @@ HUMAN_SOURCES = [
     ("example1.wav", "https://github.com/speechbrain/speechbrain/raw/develop/tests/samples/single-mic/example1.wav"),
     ("example5.wav", "https://github.com/speechbrain/speechbrain/raw/develop/tests/samples/single-mic/example5.wav"),
     ("example6.wav", "https://github.com/speechbrain/speechbrain/raw/develop/tests/samples/single-mic/example6.wav"),
+] + [
+    (f"sb_spk{sp}_snt{n}.wav",
+     f"https://github.com/speechbrain/speechbrain/raw/develop/tests/samples/ASR/spk{sp}_snt{n}.wav")
+    for sp in (1, 2) for n in range(1, 7)
 ]
 
 TTS_SCRIPT = (
@@ -38,9 +42,23 @@ TTS_SCRIPT = (
     "not discuss this with anyone else in the office."
 )
 
+# Hindi attack script: hits the intent rules (transfer/lakh, urgency, secrecy, authority)
+HINDI_SCRIPT = (
+    "नमस्ते, मैं क्षेत्रीय प्रबंधक बोल रहा हूँ। पचास लाख रुपये का ट्रांसफर "
+    "तुरंत स्वीकृत करें। यह बात किसी से न कहें।"
+)
+
+# English attacker script: OTP + PIN harvesting (credentials rules)
+ATTACKER_SCRIPT = (
+    "This is the bank manager calling. Please share the OTP and your PIN "
+    "right now so we can complete the urgent rupees transfer."
+)
+
 EDGE_VOICES = [
     "en-IN-NeerjaNeural",   # Indian English female
     "en-IN-PrabhatNeural",  # Indian English male
+    "hi-IN-MadhurNeural",   # Hindi male (multilingual attack)
+    "hi-IN-SwaraNeural",    # Hindi female (multilingual attack)
     "en-US-GuyNeural",
     "en-GB-SoniaNeural",
 ]
@@ -123,18 +141,20 @@ def main():
         save_wav(q, vocode(load_wav(p)), SR)
         rows.append([str(q), 1])
 
-    # ---- attack class 2: real neural TTS (multiple voices) ----
+    # ---- attack class 2: real neural TTS (multiple voices, EN + HI) ----
     tts_files = []
     for voice in EDGE_VOICES:
-        d = out / "attack" / f"edge_{voice.split('-')[1].lower()}.wav"
-        if edge_tts_wav(TTS_SCRIPT, voice, d):
+        text = HINDI_SCRIPT if voice.startswith("hi-IN") else TTS_SCRIPT
+        vname = voice.split("-")[2].lower().removesuffix("neural")  # neerja, madhur, ...
+        d = out / "attack" / f"edge_{vname}.wav"
+        if edge_tts_wav(text, voice, d):
             rows.append([str(d), 1])
             tts_files.append(d)
             # chunk long TTS clips to match training window length
             for i, ch in enumerate(iter_chunks(load_wav(d), chunk=2 * SR, overlap=SR)):
                 if len(ch) < 1.5 * SR:
                     continue
-                c = out / "attack" / f"edge_{voice.split('-')[1].lower()}_{i:02d}.wav"
+                c = out / "attack" / f"edge_{vname}_{i:02d}.wav"
                 save_wav(c, ch, SR)
                 rows.append([str(c), 1])
     if not tts_files:  # no network for edge-tts — Windows SAPI fallback
@@ -158,11 +178,21 @@ def main():
     # genuine call = real human (the 'regional manager' voiceprint to enroll)
     manager = load_wav(humans[0])[: 6 * SR]
     save_wav(out / "scenario" / "manager_real.wav", manager, SR)
-    # cloned call = same voice through the vocoder proxy (same-identity attack)
-    save_wav(out / "scenario" / "manager_clone.wav", vocode(manager), SR)
-    # attacker with a real neural TTS voice (cross-voice synthetic attack)
+    # cloned manager = neural TTS attack claiming to be the manager (the real
+    # threat class; the Griffin-Lim proxy is corpus-only training variety)
+    clone = out / "scenario" / "manager_clone.wav"
+    if not edge_tts_wav(TTS_SCRIPT, "en-IN-PrabhatNeural", clone):
+        # offline fallback: vocoder proxy of the manager (weaker attack class)
+        save_wav(clone, vocode(manager), SR)
+    # attacker with an OTP-harvesting English TTS voice
     if tts_files:
-        save_wav(out / "scenario" / "attacker_tts.wav", load_wav(tts_files[0]), SR)
+        atk = out / "scenario" / "attacker_tts.wav"
+        if not edge_tts_wav(ATTACKER_SCRIPT, "en-IN-NeerjaNeural", atk):
+            save_wav(atk, load_wav(tts_files[0]), SR)
+        # Hindi attacker (multilingual neural TTS attack)
+        hindi = [f for f in tts_files if "madhur" in f.name or "swara" in f.name]
+        if hindi:
+            save_wav(out / "scenario" / "attacker_hindi.wav", load_wav(hindi[0]), SR)
 
     print(f"wrote {len(rows)} clips ({sum(1 for _, l in rows if l == 0)} real / "
           f"{sum(1 for _, l in rows if l == 1)} attack) + scenario to {out}")

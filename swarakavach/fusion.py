@@ -80,19 +80,43 @@ class RiskEngine:
         }
 
     def verdict(self) -> dict:
-        """Final call verdict: peak + smoothed-final risk, level, action union."""
+        """Final call verdict. Level comes from the MEDIAN of the smoothed
+        trajectory — robust to single-chunk detector wobble on genuine calls,
+        while sustained attack patterns still drive the level up. Peak is kept
+        as an informational field (and for alert thresholds)."""
         peak = max(self.trajectory) if self.trajectory else 0.0
         final = self.trajectory[-1] if self.trajectory else 0.0
-        lvl = level_for(max(final, peak * 0.85))
-        actions = sorted({a for l in set(map(level_for, [peak, final])) for a in actions_for(l)})
+        med = float(np.median(self.trajectory)) if self.trajectory else 0.0
+        lvl = level_for(max(final, med))
+        actions = sorted({a for l in set(map(level_for, [med, final])) for a in actions_for(l)})
+        means = _layer_means(self.layer_history)
         return {
             "chunks": self.chunk_count,
             "risk_final": round(final, 4),
             "risk_peak": round(peak, 4),
             "level": lvl,
             "actions": actions,
-            "layer_means": _layer_means(self.layer_history),
+            "layer_means": means,
+            "breakdown": _breakdown(means),
         }
+
+
+def _breakdown(means: dict) -> dict:
+    """Explainable risk decomposition — why the system acted.
+
+    Maps raw layers onto judge-facing risk dimensions (each 0-100, higher =
+    riskier): voice authenticity (A+B), speaker mismatch (C), call context (D),
+    social engineering (E)."""
+    def pct(v):
+        return None if v is None else int(round(v * 100))
+
+    synth = [means[k] for k in ("artifact", "ssl") if means.get(k) is not None]
+    return {
+        "voice_authenticity_risk": pct(float(np.mean(synth))) if synth else None,
+        "speaker_mismatch_risk": pct(means.get("speaker")),
+        "call_context_risk": pct(means.get("context")),
+        "social_engineering_risk": pct(means.get("intent")),
+    }
 
 
 def _layer_means(history: list[dict]) -> dict:

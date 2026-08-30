@@ -17,10 +17,11 @@ CHUNK_OVERLAP_SAMPLES = SAMPLE_RATE // 2           # 0.5s
 # Bootstrap-calibrated on the demo corpus; recalibrate on ASVspoof5 dev
 # (see docs/architecture.md#calibration).
 LAYER_WEIGHTS = {
-    "artifact": 0.55,   # Detector A: LFCC artifact CNN
-    "ssl": 0.30,        # Detector B: wav2vec2 deepfake classifier
-    "speaker": 0.05,    # Detector C: enrolled-voiceprint consistency
-    "context": 0.10,    # Detector D: call metadata rules
+    "artifact": 0.50,   # Detector A: LFCC artifact CNN   — is this synthetic?
+    "ssl": 0.28,        # Detector B: wav2vec2 classifier — is this synthetic?
+    "speaker": 0.05,    # Detector C: voiceprint match    — is this the claimed person?
+    "context": 0.09,    # Detector D: call metadata       — is this call suspicious?
+    "intent": 0.08,     # Detector E: transcript rules    — is this request dangerous?
 }
 
 # ---- Detector B (SSL) ----
@@ -55,5 +56,6 @@ ACTIONS = {
 SPEAKER_COS_REF = 0.92   # cosine above this = consistent with enrollment
 SPEAKER_COS_SPAN = 0.15  # cosine this far below ref = fully inconsistent
 
-# ---- Alerts ----
+# ---- Alerts & audit ----
 WEBHOOK_URL = os.environ.get("SWK_WEBHOOK_URL", "")
+AUDIT_LEDGER = os.environ.get("SWK_AUDIT_LEDGER", str(DATA_DIR / "audit" / "ledger.jsonl"))

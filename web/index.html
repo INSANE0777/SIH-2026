@@ -20,7 +20,7 @@
   button{background:#182234;color:var(--txt);border:1px solid #263144;padding:9px 14px;border-radius:8px;cursor:pointer;font-size:13px}
   button:hover{background:#1f2c44;border-color:var(--acc)}
   button.rec{background:#3a1520;border-color:#5c1f2e;color:#ff9d9d}
-  input[type=text]{background:#0d131d;border:1px solid var(--line);color:var(--txt);padding:8px 10px;border-radius:8px;width:100%;font-size:13px}
+  input[type=text],textarea{background:#0d131d;border:1px solid var(--line);color:var(--txt);padding:8px 10px;border-radius:8px;width:100%;font-size:13px;resize:vertical}
   .row{display:flex;gap:8px;margin-bottom:10px}
   .gauge-wrap{display:flex;flex-direction:column;align-items:center;padding:8px 0}
   .level{font-size:26px;font-weight:700;letter-spacing:2px;margin-top:10px}
@@ -57,6 +57,7 @@
     <h2>Call Channel</h2>
     <div class="row"><button id="micBtn">🎙 Start Live Analysis</button></div>
     <div class="row"><input type="text" id="speakerId" placeholder="speaker_id (e.g. regional_manager)"></div>
+    <div class="row"><textarea id="transcript" rows="2" placeholder="call transcript (optional — feeds the social-engineering intent rules; comes from ASR in production)"></textarea></div>
     <div class="row"><button id="enrollBtn">Enroll Voiceprint (uploads file)</button>
       <input type="file" id="enrollFile" accept="audio/*" hidden></div>
     <div class="row"><button id="fileBtn">📁 Analyze Audio File</button>
@@ -87,11 +88,14 @@
   <section class="panel">
     <h2>Layer Contributions</h2>
     <div class="layers" id="layers">
-      <div class="layer" data-k="artifact"><div class="t"><span>A · Spectral artifacts (CNN)</span><span>—</span></div><div class="bar"><i></i></div></div>
-      <div class="layer" data-k="ssl"><div class="t"><span>B · SSL prosody (wav2vec2)</span><span>—</span></div><div class="bar"><i></i></div></div>
-      <div class="layer" data-k="speaker"><div class="t"><span>C · Speaker consistency</span><span>—</span></div><div class="bar"><i></i></div></div>
-      <div class="layer" data-k="context"><div class="t"><span>D · Call context rules</span><span>—</span></div><div class="bar"><i></i></div></div>
+      <div class="layer" data-k="artifact"><div class="t"><span>A · Spectral artifacts — synthetic?</span><span>—</span></div><div class="bar"><i></i></div></div>
+      <div class="layer" data-k="ssl"><div class="t"><span>B · SSL wav2vec2 — synthetic?</span><span>—</span></div><div class="bar"><i></i></div></div>
+      <div class="layer" data-k="speaker"><div class="t"><span>C · Voiceprint — this person?</span><span>—</span></div><div class="bar"><i></i></div></div>
+      <div class="layer" data-k="context"><div class="t"><span>D · Call context — suspicious call?</span><span>—</span></div><div class="bar"><i></i></div></div>
+      <div class="layer" data-k="intent"><div class="t"><span>E · Intent — dangerous request?</span><span>—</span></div><div class="bar"><i></i></div></div>
     </div>
+    <h2 style="margin-top:18px">Incident Ledger (hash-chained)</h2>
+    <div class="status" id="audit">no incidents yet</div>
     <h2 style="margin-top:18px">Event Log</h2>
     <div id="log"></div>
   </section>
@@ -102,7 +106,8 @@ let ws=null, micCtx=null, proc=null, src=null, streaming=false;
 const traj=[];
 
 function connect(){
-  ws=new WebSocket(`ws://${location.host}/v1/stream?speaker_id=${encodeURIComponent($('speakerId').value||'')}&context=${encodeURIComponent(JSON.stringify({caller_id_match:'false',enrolled_contact:'true',tx_amount:5000000}))}`);
+  const tr=$('transcript').value.trim();
+  ws=new WebSocket(`ws://${location.host}/v1/stream?speaker_id=${encodeURIComponent($('speakerId').value||'')}&context=${encodeURIComponent(JSON.stringify({caller_id_match:'false',enrolled_contact:'true',tx_amount:5000000}))}${tr?'&transcript='+encodeURIComponent(tr):''}`);
   ws.binaryType='arraybuffer';
   ws.onopen=()=>{$('conn').classList.add('on');log('connected — stream ready');};
   ws.onclose=()=>{$('conn').classList.remove('on');if(streaming)stopMic();};
@@ -129,8 +134,12 @@ function onEvent(m){
 }
 function showFinal(m){
   const f=$('final'); f.style.display='block';
-  f.innerHTML=`<b>FINAL VERDICT</b> — level <b class="lvl-${m.level}">${m.level}</b> · final ${m.risk_final} · peak ${m.risk_peak}<br>actions: <b>${m.actions.join(', ')||'none'}</b> · session ${m.session_id}`;
+  const bd=m.breakdown||{};
+  const bdRows=Object.entries(bd).filter(([,v])=>v!=null)
+    .map(([k,v])=>`${k.replace(/_r?isk/g,'')}: <b>${v}</b>`).join(' · ');
+  f.innerHTML=`<b>FINAL VERDICT</b> — level <b class="lvl-${m.level}">${m.level}</b> · final ${m.risk_final} · peak ${m.risk_peak}<br>actions: <b>${m.actions.join(', ')||'none'}</b> · session ${m.session_id}${bdRows?'<br>'+bdRows:''}`;
   log(`■ CALL COMPLETE — ${m.level} (${m.risk_final})`);
+  fetchAudit();
 }
 function drawSpark(){
   const c=$('spark'),g=c.getContext('2d');
@@ -178,14 +187,22 @@ $('enrollFile').onchange=async e=>{
 $('fileBtn').onclick=()=>$('audioFile').click();
 $('audioFile').onchange=async e=>{
   const f=e.target.files[0]; if(!f)return;
-  const sid=$('speakerId').value.trim();
-  const r=await fetch(`/v1/analyze?${sid?'speaker_id='+encodeURIComponent(sid)+'&':''}context=${encodeURIComponent(JSON.stringify({caller_id_match:'false',enrolled_contact:'true',tx_amount:5000000}))}`,{method:'POST',body:await f.arrayBuffer()});
+  const sid=$('speakerId').value.trim(), tr=$('transcript').value.trim();
+  const r=await fetch(`/v1/analyze?${sid?'speaker_id='+encodeURIComponent(sid)+'&':''}context=${encodeURIComponent(JSON.stringify({caller_id_match:'false',enrolled_contact:'true',tx_amount:5000000}))}${tr?'&transcript='+encodeURIComponent(tr):''}`,{method:'POST',body:await f.arrayBuffer()});
   const m=await r.json();
   if(m.verdict)showFinal(m.verdict);else log(JSON.stringify(m));
 };
+function fetchAudit(){
+  fetch('/v1/audit').then(r=>r.json()).then(a=>{
+    const inc=(a.records||[]).filter(r=>r.type==='incident');
+    $('audit').innerHTML=`chain <b class="${a.chain_valid?'lvl-LOW':'lvl-CRITICAL'}">${a.chain_valid?'INTACT':'BROKEN'}</b> · ${inc.length} incident${inc.length===1?'':'s'}<br>`+
+      inc.slice(-3).reverse().map(r=>`${r.incident_id} · <b>${r.level}</b> · risk ${r.risk_peak} · ${r.transaction_action}`).join('<br>');
+  }).catch(()=>{});
+}
 fetch('/healthz').then(r=>r.json()).then(h=>{
   $('health').innerHTML=`layer A (artifact CNN): <b>${h.layers.artifact?'ONLINE':'offline'}</b><br>layer B (wav2vec2): <b>${h.layers.ssl?'ONLINE':'offline'}</b><br>enrolled speakers: <b>${h.layers.speaker_enrollments}</b>`;
 }).catch(()=>{$('health').textContent='server offline — run: uvicorn swarakavach.server:app';});
+fetchAudit();
 connect();
 </script>
 </body>

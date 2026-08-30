@@ -51,18 +51,59 @@ metadata: caller-ID/SIM mismatch, enrolled-contact status, known-fraud flag,
 international origin, transaction amount (scaled at ₹50 L), call frequency.
 Returns None when no metadata is provided.
 
+### E — Conversation-intent risk
+`swarakavach/detectors/intent.py` — the fourth question: **is what they are
+asking for dangerous?** Rule-based, bilingual (English + Hindi, romanized and
+Devanagari) categories: fund transfer, credentials/OTP harvesting, urgency,
+secrecy, authority impersonation. Every score carries the matched rules and
+keywords (explainability payload). Transcript input comes from ASR in production
+(honest labeling: the demo passes the transcript explicitly); the keyword rules
+are auditable by design — swap in a fine-tuned IndicBERT classifier if keyword
+precision becomes the ceiling.
+
+### Incident audit chain
+`swarakavach/audit.py` — every HIGH/CRITICAL verdict appends a hash-chained
+record (SHA-256, each record embeds the previous hash) to an append-only JSONL
+ledger: incident ID, risk, level, model version, policy triggered, transaction
+action, supervisor decision, timestamp. **Metadata only — never audio, never
+transcripts** (privacy). `verify_chain()` detects any after-the-fact edit; the
+tamper test is unit-tested. This is the legitimate blockchain-shaped component
+for the theme: tamper-evident fraud forensics, not decorative crypto.
+
 ## Fusion & policy
 `swarakavach/fusion.py`
 
 1. Weighted late fusion over **available** layers (missing → renormalize):
-   A 0.55 · B 0.30 · C 0.05 · D 0.10 (bootstrap-calibrated; see Calibration).
+   A 0.50 · B 0.28 · C 0.05 · D 0.09 · E 0.08 (bootstrap-calibrated; see Calibration).
 2. Temperature-softened sigmoid calibration (T = 1.3) — the fused mean is treated
    as a logit-of-evidence, softening overconfident single layers.
 3. EMA smoothing (α = 0.35) → the **dynamic risk trajectory** the PS asks for.
-4. Levels: LOW < 0.25 ≤ MID < 0.45 ≤ HIGH < 0.65 ≤ CRITICAL.
+4. Levels: LOW < 0.25 ≤ MID < 0.45 ≤ HIGH < 0.65 ≤ CRITICAL. The verdict level
+   comes from the **median** of the trajectory — robust to single-chunk detector
+   wobble on genuine calls (a one-chunk CNN false positive cannot block a
+   transaction), while sustained attack patterns still drive the level up. Peak
+   is kept as an informational/alert field.
 5. Actions: CAUTION_PROMPT, STEP_UP_MFA (MID) · HOLD_TRANSACTION, LIVENESS_CHALLENGE,
-   SUPERVISOR_ALERT (HIGH) · + INCIDENT_WEBHOOK (CRITICAL). Final verdict takes
-   max(final, 0.85 × peak) — an early spike is never forgotten by trailing audio.
+   SUPERVISOR_ALERT (HIGH) · + INCIDENT_WEBHOOK (CRITICAL). HIGH/CRITICAL also
+   append a hash-chained incident record to the audit ledger.
+
+## Explainability
+
+Every verdict carries a **breakdown** — the judge-facing risk decomposition the
+policy acted on (0–100 per dimension):
+
+```
+voice authenticity      80   ################ voice is synthetic
+speaker mismatch        38   #######           not the enrolled person
+call context            55   ###########       suspicious call setup
+social engineering      70   ##############    dangerous request
+────────────────────────────
+FINAL RISK               86   CRITICAL → HOLD_TRANSACTION
+```
+
+A/B average → voice authenticity; C → speaker mismatch; D → call context;
+E → social engineering. The demo prints this per call; the dashboard and
+`/v1/analyze` return it in JSON.
 
 ## Calibration
 
@@ -91,12 +132,29 @@ in this repo is reproducible from code — no committed audio.
 - Session store is in-memory (dict); production swap = Redis (single-line change
   behind `SESSIONS`).
 
-## Evaluation targets
+## Evaluation — honest protocols
 
-| Metric | Target |
+The bootstrap numbers are **labeled bootstrap numbers**. What makes them honest:
+
+- **Speaker-disjoint validation** (`scripts/train_artifact.py`): whole speaker
+  groups (human speakers AND TTS voices) are held out of training. The reported
+  val accuracy (0.74: bonafide 0.56 / spoof 0.84) measures generalization to
+  *unseen speakers*, not chunk memorization.
+- **Per-class EER** (`scripts/eval_benchmarks.py`): the vocoder-proxy attack
+  class is reported separately from real neural TTS — the proxy is corpus
+  training variety, not a claimed capability.
+- **Telephony degradation sweep** (`scripts/eval_telephony.py`): clean → 8 kHz
+  narrowband → μ-law → 20 dB noise → 2% packet loss. Current layer-A EER:
+  0.18 clean → 0.26 worst case — the quantified cost of codec-blind training,
+  and the case for week-3 codec augmentation.
+- **Known limitation, documented not hidden:** the SSL layer misses modern Edge
+  neural TTS at call level (0.08); the artifact layer covers it. Fusion exists
+  precisely because single layers fail differently.
+
+| Metric | Target (real data, roadmap) |
 |---|---|
 | EER on ASVspoof 2021/5 LA (dev) | < 2% |
-| EER on in-the-wild 2024+ deepfake sets | < 8% |
-| EER leave-one-tool-out (own corpus) | < 6% |
+| EER leave-one-generator-out (own 2026 corpus) | < 6% |
+| EER in-the-wild 2024+ deepfake sets | < 8% |
 | p95 chunk latency | < 300 ms |
 | Edge bundle (ONNX, layer A) | < 10 MB |

@@ -20,9 +20,10 @@ import numpy as np
 from fastapi import Body, FastAPI, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 
+from . import audit
 from . import config
 from .audio import iter_chunks, load_wav_bytes, pcm16_to_float
-from .detectors import artifact, context as ctx_engine, speaker, ssl_detector
+from .detectors import artifact, context as ctx_engine, intent, speaker, ssl_detector
 from .fusion import RiskEngine
 
 app = FastAPI(title="SwaraKavach", version="0.1.0",
@@ -32,7 +33,7 @@ SESSIONS: dict[str, dict] = {}
 
 
 def run_session(wav: np.ndarray, context: dict | None, speaker_id: str | None,
-                session_id: str | None = None) -> dict:
+                session_id: str | None = None, transcript: str | None = None) -> dict:
     engine = RiskEngine(context)
     for chunk in iter_chunks(wav, config.CHUNK_SAMPLES, config.CHUNK_OVERLAP_SAMPLES):
         engine.update({
@@ -40,14 +41,17 @@ def run_session(wav: np.ndarray, context: dict | None, speaker_id: str | None,
             "ssl": ssl_detector.score(chunk),
             "speaker": speaker.score(speaker_id, chunk) if speaker_id else None,
             "context": ctx_engine.score(context),
+            "intent": intent.score(transcript),
         })
     verdict = engine.verdict()
     sid = session_id or uuid.uuid4().hex[:12]
     SESSIONS[sid] = {
         "session_id": sid, "ts": time.time(), "context": context or {},
-        "speaker_id": speaker_id, "verdict": verdict,
+        "speaker_id": speaker_id, "verdict": verdict, "transcript": transcript,
         "trajectory": engine.trajectory, "layers": engine.layer_history,
     }
+    if verdict["level"] in ("HIGH", "CRITICAL"):
+        audit.incident(SESSIONS[sid], model_version=app.version)
     if "INCIDENT_WEBHOOK" in verdict["actions"] and config.WEBHOOK_URL:
         _webhook(SESSIONS[sid])
     return SESSIONS[sid]
@@ -84,13 +88,13 @@ def healthz():
 
 @app.post("/v1/analyze")
 async def analyze(body: bytes = Body(...), speaker_id: str | None = Query(None),
-                  context: str | None = Query(None)):
+                  context: str | None = Query(None), transcript: str | None = Query(None)):
     try:
         wav = load_wav_bytes(body)
     except Exception as e:
         return JSONResponse(status_code=400, content={"error": f"bad audio: {e}"})
     ctx = json.loads(context) if context else None
-    return run_session(wav, ctx, speaker_id)
+    return run_session(wav, ctx, speaker_id, transcript=transcript)
 
 
 @app.post("/v1/enroll")
@@ -109,9 +113,26 @@ def session(sid: str):
     return SESSIONS[sid]
 
 
+@app.get("/v1/audit")
+def audit_ledger():
+    """Hash-chained incident ledger + chain integrity proof."""
+    valid, broken = audit.verify_chain()
+    return {"chain_valid": valid, "broken_at": broken if not valid else None,
+            "records": audit.read()}
+
+
+@app.post("/v1/audit/{incident_id}/decision")
+def audit_decision(incident_id: str, decision: str = Query(...),
+                   supervisor: str = Query(...)):
+    """Append a supervisor decision for an incident (append-only)."""
+    if not any(r.get("incident_id") == incident_id for r in audit.read()):
+        return JSONResponse(status_code=404, content={"error": "unknown incident"})
+    return audit.decision(incident_id, decision, supervisor)
+
+
 @app.websocket("/v1/stream")
 async def stream(ws: WebSocket, speaker_id: str | None = Query(None),
-                 context: str | None = Query(None)):
+                 context: str | None = Query(None), transcript: str | None = Query(None)):
     """Live stream protocol: client sends binary PCM16LE 16k-mono frames;
     server replies per-chunk risk events; text frame 'END' finalizes."""
     await ws.accept()
@@ -138,12 +159,16 @@ async def stream(ws: WebSocket, speaker_id: str | None = Query(None),
                     "ssl": await asyncio.to_thread(ssl_detector.score, chunk),
                     "speaker": speaker.score(speaker_id, chunk) if speaker_id else None,
                     "context": ctx_engine.score(engine.context),
+                    "intent": intent.score(transcript),
                 })
                 await ws.send_text(json.dumps({"session_id": sid, **ev}))
         verdict = engine.verdict()
         SESSIONS[sid] = {"session_id": sid, "ts": time.time(), "context": engine.context,
                          "speaker_id": speaker_id, "verdict": verdict,
+                         "transcript": transcript,
                          "trajectory": engine.trajectory, "layers": engine.layer_history}
+        if verdict["level"] in ("HIGH", "CRITICAL"):
+            audit.incident(SESSIONS[sid], model_version=app.version)
         if "INCIDENT_WEBHOOK" in verdict["actions"] and config.WEBHOOK_URL:
             _webhook(SESSIONS[sid])
         await ws.send_text(json.dumps({"session_id": sid, "final": True, **verdict}))
