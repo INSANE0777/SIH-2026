@@ -55,28 +55,31 @@ TTS (p=0.08); layer A catches both.
 pip install -r requirements.txt
 pip install -e .
 
-# 1. build the bootstrap demo corpus (downloads public human-speech samples,
-#    generates real neural-TTS attacks via edge-tts + vocoder clone proxies)
+# 1. demo corpus + scenario (public human speech, neural TTS attacks)
 python scripts/make_demo_data.py
-
-# 2. train the layer-A artifact CNN (bootstrap corpus; ~1 min CPU)
-python scripts/train_artifact.py
-
-# 3. run the three-call finale demo (genuine → cloned → TTS attacker)
+# 2. attack generator families for LOTO (Edge/Piper/SAPI/XTTS-v2; GPU helps)
+python scripts/make_clone_corpus.py
+# 3. 40-speaker LibriSpeech bonafide diversity
+python scripts/prepare_libri.py
+# 4. train layer A on everything (speaker-disjoint validation)
+python scripts/train_artifact.py --labels data/demo/labels.csv \
+    --extra-labels data/clone-corpus/chunks/labels.csv,data/libri-human/chunks/labels.csv
+# 5. four-call finale demo (genuine -> REAL XTTS clone -> OTP attacker -> Hindi)
 python scripts/run_demo.py
-
-# 4. benchmarks (per-layer + fused EER)
-python scripts/eval_benchmarks.py
-
-# 5. API + live dashboard
+# 6. honest evaluations
+python scripts/eval_loto.py            # leave-one-generator-out (the core claim)
+python scripts/eval_benchmarks.py      # per-layer + fused EER, per-class
+python scripts/eval_telephony.py       # channel degradation sweep
+# 7. API + live dashboard
 uvicorn swarakavach.server:app --port 8000     # open http://localhost:8000
 ```
 
 **Expected demo output:** genuine manager call → LOW, transaction proceeds;
-cloned manager (neural TTS) → CRITICAL, transaction HOLD + liveness challenge +
-supervisor alert; OTP-harvesting attacker (English) and Hindi attacker (Devanagari
-intent rules fire) → CRITICAL, all actions + incident webhook. Every verdict prints
-an explainable per-dimension breakdown (voice authenticity / speaker mismatch /
+cloned manager (**a real XTTS-v2 zero-shot clone of the enrolled manager's
+voice**) → CRITICAL, transaction HOLD + liveness challenge + supervisor alert;
+OTP-harvesting attacker (English) and Hindi attacker (Devanagari intent rules
+fire) → CRITICAL, all actions + incident webhook. Every verdict prints an
+explainable per-dimension breakdown (voice authenticity / speaker mismatch /
 call context / social engineering).
 
 ## API
@@ -101,15 +104,16 @@ build step, single HTML file.
 |---|---|
 | Fusion + risk engine + policy actions + explainable breakdown | **Working**, unit-tested |
 | REST + WebSocket API + dashboard + incident ledger | **Working**, end-to-end tested |
-| Layer A artifact CNN | **Working** — trained on the reproducible corpus (real human speech × 6 speakers + real neural TTS × 6 voices incl. Hindi + vocoder proxies) with augmentation and speaker-disjoint validation. **Honest numbers:** val acc 0.74 speaker-disjoint (bonafide 0.56 / spoof 0.84); corpus EER 0.18 (0.17 excluding the vocoder-proxy class) |
+| Layer A artifact CNN | **Working** — trained on the reproducible corpus: real human speech (16 curated + 40 LibriSpeech speakers) + 4 attack generator families (Edge neural TTS incl. Hindi, Piper local neural TTS, Windows SAPI, **XTTS-v2 zero-shot voice clones of our actual speakers**) + vocoder proxies. **Honest numbers:** speaker-disjoint val acc 0.85 (bonafide 0.91 / spoof 0.57); corpus EER 0.13; **leave-one-generator-out mean held-out EER 0.12** (edge 0.16 / piper 0.05 / sapi 0.09 / xtts 0.19) — measured, not aspirational |
+| **Leave-one-generator-out** | **Measured** — `scripts/eval_loto.py`: for each family, train on the other three + humans, test on the held-out family. This is the protocol that predicts in-the-wild performance and the core ML claim. |
 | Layer B SSL detector | **Working** — `Hemgg/Deepfake-audio-detection` (wav2vec2, ASVspoof-based); validated: human 0.03 / SAPI TTS 0.98 / Edge neural TTS 0.08 (misses modern neural TTS — documented; layer A covers it) |
 | Layer C speaker consistency | **Working** — prosody+LFCC voiceprint, cosine distance; abstains without enrollment |
 | Layer D context rules | **Working** — deterministic metadata risk rules |
 | Layer E intent rules | **Working** — bilingual (EN/HI, Devanagari + romanized) social-engineering rule engine with per-rule explainability; transcript comes from ASR in production |
-| Telephony robustness | **Measured** — `scripts/eval_telephony.py` sweeps clean → 8kHz narrowband → μ-law → noise → packet loss and reports the EER cost of each (layer A: 0.18 clean → 0.26 worst-case) |
+| Telephony robustness | **Measured** — `scripts/eval_telephony.py` sweeps clean → 8kHz narrowband → μ-law → noise → packet loss: fused EER 0.15 clean → 0.32 worst case, the quantified cost of codec-blind training (fix = codec augmentation, roadmap) |
 | Audit chain | **Working** — hash-chained, tamper-evident incident ledger + supervisor decisions; chain verification unit-tested |
 | ASVspoof 2019/2021/5 training | **Planned** — `train_artifact.py --asvspoof-dir` already accepts the ASVspoof2019 LA layout |
-| Real 2026 clone corpus (F5-TTS, XTTS-v2, RVC, Fish Speech) + leave-one-generator-out eval | **Planned** — the core ML contribution; see `docs/architecture.md` |
+| Real 2026 clone corpus (F5-TTS, RVC, Fish Speech) + broader LOTO | **Next** — 4 generator families implemented (Edge, Piper, SAPI, XTTS-v2); adding F5-TTS/RVC strengthens the LOTO claim further |
 | Indic-language ASR → live intent pipeline | **Planned** — AI4Bharat IndicVoices/Shrutilipi data already in the roadmap |
 
 We deliberately ship the corpus generator instead of committed audio so every
@@ -144,11 +148,7 @@ be flagged accordingly.
 
 ## Roadmap
 
-1. **Week 1–2:** real training — ASVspoof 2019/2021 LA + own 2026 clone corpus
-   (F5-TTS, XTTS-v2, OpenVoice 2, RVC, Fish Speech at 3 s/10 s enrollment),
-   **leave-one-generator-out evaluation** as the headline ML claim: train on all
-   clone tools except one, test on the held-out generator — that is the number
-   that predicts in-the-wild performance.
+1. **Week 1–2:** done for the corpus (Edge/Piper/SAPI/XTTS-v2 + LibriSpeech diversity + LOTO protocol); next: add F5-TTS, RVC, OpenVoice — every new family strengthens leave-one-generator-out eval. ASVspoof 2019 LA remains the baseline anchor when storage allows (65 GB).
 2. **Week 3–4:** telephony-realistic augmentation (μ-law 8 kHz, AMR/EVS/Opus
    codec simulation, MUSAN noise, RIR reverb, packet loss) folded into training
    — the eval_telephony deltas show exactly what it buys.

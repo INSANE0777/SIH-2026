@@ -127,8 +127,8 @@ def main():
     rows, real_chunks = [], []
     for hw in humans:
         wav = load_wav(hw)
-        for i, ch in enumerate(iter_chunks(wav, chunk=2 * SR, overlap=SR)):
-            if len(ch) < 1.5 * SR:
+        for i, ch in enumerate(iter_chunks(wav, chunk=16000, overlap=8000)):
+            if len(ch) < 12000:
                 continue
             p = out / "real" / f"{hw.stem}_{i:02d}.wav"
             save_wav(p, ch, SR)
@@ -151,8 +151,8 @@ def main():
             rows.append([str(d), 1])
             tts_files.append(d)
             # chunk long TTS clips to match training window length
-            for i, ch in enumerate(iter_chunks(load_wav(d), chunk=2 * SR, overlap=SR)):
-                if len(ch) < 1.5 * SR:
+            for i, ch in enumerate(iter_chunks(load_wav(d), chunk=16000, overlap=8000)):
+                if len(ch) < 12000:
                     continue
                 c = out / "attack" / f"edge_{vname}_{i:02d}.wav"
                 save_wav(c, ch, SR)
@@ -162,8 +162,8 @@ def main():
         if sapi_tts(d):
             rows.append([str(d), 1])
             tts_files.append(d)
-            for i, ch in enumerate(iter_chunks(load_wav(d), chunk=2 * SR, overlap=SR)):
-                if len(ch) < 1.5 * SR:
+            for i, ch in enumerate(iter_chunks(load_wav(d), chunk=16000, overlap=8000)):
+                if len(ch) < 12000:
                     continue
                 c = out / "attack" / f"sapi_tts_{i:02d}.wav"
                 save_wav(c, ch, SR)
@@ -178,10 +178,15 @@ def main():
     # genuine call = real human (the 'regional manager' voiceprint to enroll)
     manager = load_wav(humans[0])[: 6 * SR]
     save_wav(out / "scenario" / "manager_real.wav", manager, SR)
-    # cloned manager = neural TTS attack claiming to be the manager (the real
-    # threat class; the Griffin-Lim proxy is corpus-only training variety)
+    # cloned manager = REAL zero-shot voice clone (XTTS-v2) of the enrolled
+    # manager when the clone corpus exists; falls back to neural TTS / vocoder.
     clone = out / "scenario" / "manager_clone.wav"
-    if not edge_tts_wav(TTS_SCRIPT, "en-IN-PrabhatNeural", clone):
+    mgr_stem = humans[0].stem
+    xtts_clone = (config.DATA_DIR / "clone-corpus" / "xtts" / f"xtts_{mgr_stem}_1.wav")
+    if xtts_clone.exists():
+        save_wav(clone, load_wav(xtts_clone), SR)
+        print(f"scenario clone: real XTTS zero-shot clone of {mgr_stem}")
+    elif not edge_tts_wav(TTS_SCRIPT, "en-IN-PrabhatNeural", clone):
         # offline fallback: vocoder proxy of the manager (weaker attack class)
         save_wav(clone, vocode(manager), SR)
     # attacker with an OTP-harvesting English TTS voice

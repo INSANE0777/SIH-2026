@@ -3,6 +3,8 @@
 Default: synthetic bootstrap corpus (data/demo/labels.csv).
 Real:    ASVspoof2019 LA — pass --asvspoof-dir <root> containing
          flac/ (audio) and LA/ASVspoof2019_LA_cm_protocols files.
+Clone    corpus: pass --labels data/clone-corpus/manifest-derived csv
+         (see scripts/eval_loto.py chunking).
 
 The validation split is SPEAKER-DISJOINT: whole speaker groups (human
 speakers and TTS voices) are held out, so val accuracy measures
@@ -12,60 +14,16 @@ Saves:   models/artifact_bootstrap.pt  {state_dict, n_lfcc, val_acc}
 import argparse
 import csv
 import random
-import re
 from pathlib import Path
 
-import numpy as np
 import torch
+from torch.utils.data import DataLoader
 import torch.nn as nn
-from torch.utils.data import DataLoader, Dataset
 
 from swarakavach import config
 from swarakavach.audio import load_wav
 from swarakavach.detectors.artifact import ArtifactCNN
-from swarakavach.features import lfcc
-
-
-class LFCCDataset(Dataset):
-    """Train-time augmentation: gain, pitch shift (resample trick), light noise —
-    forces speaker-invariant anti-spoof features on a tiny multi-speaker corpus."""
-
-    def __init__(self, items, augment: bool = False, seed: int = 0):
-        self.items = items
-        self.augment = augment
-        self.rng = np.random.default_rng(seed)
-
-    def _aug(self, wav: np.ndarray) -> np.ndarray:
-        x = wav * (0.7 + 0.6 * self.rng.random())               # gain 0.7-1.3
-        if self.rng.random() < 0.5:                             # pitch +-1.5 st
-            r = 2 ** (self.rng.uniform(-1.5, 1.5) / 12)
-            x = np.interp(np.arange(0, len(x), r), np.arange(len(x)), x).astype(np.float32)
-        if self.rng.random() < 0.5:                             # 30 dB noise
-            sig = float(np.mean(x ** 2)) + 1e-12
-            n = self.rng.standard_normal(len(x)).astype(np.float32)
-            x = x + n * np.sqrt(sig / 10 ** (30 / 10.0))
-        return np.clip(x, -1.0, 1.0)
-
-    def __len__(self):
-        return len(self.items)
-
-    def __getitem__(self, i):
-        path, label = self.items[i]
-        wav = load_wav(path)
-        if self.augment:
-            wav = self._aug(wav)
-        f = lfcc(wav)
-        f = (f - f.mean(axis=1, keepdims=True)) / (f.std(axis=1, keepdims=True) + 1e-6)
-        return torch.from_numpy(f).float(), torch.tensor(label)
-
-
-def speaker_key(path: str) -> str:
-    """Group key for speaker-disjoint splits: strip prefixes and chunk index(es).
-    real/jfk_03.wav -> jfk · attack/voc_jfk_03.wav -> jfk · edge_neerja_02 -> neerja
-    voc_sb_spk1_snt1.wav and sb_spk1_snt1_00.wav -> sb_spk1_snt (same speaker)
-    """
-    stem = re.sub(r"^(voc_|edge_)", "", Path(path).stem)
-    return re.sub(r"(?:_\d+)+$", "", stem)
+from swarakavach.train_utils import LFCCDataset, collate, speaker_key, per_speaker_balance
 
 
 def asvspoof_items(root: Path):
@@ -84,21 +42,12 @@ def asvspoof_items(root: Path):
     return items
 
 
-def collate(batch):
-    # right-pad LFCC time dimension to batch max
-    max_t = max(x.shape[1] for x, _ in batch)
-    xs, ys = [], []
-    for x, y in batch:
-        pad = torch.zeros(x.shape[0], max_t)
-        pad[:, : x.shape[1]] = x
-        xs.append(pad)
-        ys.append(y)
-    return torch.stack(xs), torch.stack(ys)
-
-
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--labels", default=str(config.DATA_DIR / "demo" / "labels.csv"))
+    ap.add_argument("--extra-labels", default=None,
+                    help="extra labeled csv(s), comma-separated — e.g. the clone "
+                         "corpus manifest (path,family,label) for family diversity")
     ap.add_argument("--asvspoof-dir", default=None, help="ASVspoof2019 LA root (overrides --labels)")
     ap.add_argument("--epochs", type=int, default=15)
     ap.add_argument("--out", default=str(config.ARTIFACT_CKPT))
@@ -109,6 +58,19 @@ def main():
     else:
         with open(args.labels) as f:
             items = [(r["path"], int(r["label"])) for r in csv.DictReader(f)]
+        if args.extra_labels:
+            for csv_path in args.extra_labels.split(","):
+                with open(csv_path.strip()) as f:
+                    for r in csv.DictReader(f):
+                        items.append((r["path"], int(r["label"])))
+        # dedupe paths (clone corpus human rows overlap demo corpus reals)
+        seen = set()
+        dedup = []
+        for p, l in items:
+            if p not in seen:
+                seen.add(p)
+                dedup.append((p, l))
+        items = dedup
     random.seed(0)
     # SPEAKER-DISJOINT split: hold out entire speaker/voice groups until val
     # holds >= 20% of rows — the honest generalization number on this corpus.
@@ -126,15 +88,13 @@ def main():
     print(f"train={len(train)} val={len(val)} "
           f"(held-out speakers: {sorted({speaker_key(it[0]) for it in val})})")
 
-    # oversample the minority class (real) to match attacks — the corpus is
-    # ~1:3 real:attack and an unbalanced CNN gets trigger-happy on genuine calls
+    # per-speaker class balancing (see train_utils.per_speaker_balance) +
+    # global class weighting — unbalanced clone corpora make the CNN
+    # trigger-happy on the genuine speaker's own voice
+    train = per_speaker_balance(train)
+    random.shuffle(train)
     n_pos = sum(1 for _, l in train if l == 1)
     n_neg = len(train) - n_pos
-    if n_neg and n_pos / n_neg > 1.5:
-        mult = n_pos // n_neg
-        train = train + [it for it in train if it[1] == 0] * mult
-        random.shuffle(train)
-        print(f"oversampled real x{mult + 1} -> train={len(train)}")
 
     dl = DataLoader(LFCCDataset(train, augment=True), batch_size=16, shuffle=True, collate_fn=collate)
     vdl = DataLoader(LFCCDataset(val), batch_size=16, collate_fn=collate)

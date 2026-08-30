@@ -12,6 +12,10 @@ SAMPLE_RATE = 16000
 CHUNK_SECONDS = 1.0
 CHUNK_SAMPLES = int(SAMPLE_RATE * CHUNK_SECONDS)   # 16000
 CHUNK_OVERLAP_SAMPLES = SAMPLE_RATE // 2           # 0.5s
+# corpus/training windows MUST match live-scoring windows (CHUNK_SAMPLES) —
+# a CNN trained on 2 s windows wobbles when scoring 1 s chunks
+TRAIN_CHUNK_SAMPLES = CHUNK_SAMPLES
+TRAIN_OVERLAP_SAMPLES = CHUNK_OVERLAP_SAMPLES
 
 # ---- Detector layer weights (late fusion; renormalized over available layers) ----
 # Bootstrap-calibrated on the demo corpus; recalibrate on ASVspoof5 dev

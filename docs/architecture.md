@@ -134,27 +134,31 @@ in this repo is reproducible from code — no committed audio.
 
 ## Evaluation — honest protocols
 
-The bootstrap numbers are **labeled bootstrap numbers**. What makes them honest:
+The numbers below are **measured on our own 2026 clone corpus**, not copied
+from anyone's paper:
 
+- **Leave-one-generator-out (LOTO)** (`scripts/eval_loto.py`): for each attack
+  family, train layer A on the other three families + human speech, test on the
+  held-out family. **Mean held-out EER 0.12** (edge 0.16 · piper 0.05 · sapi 0.09 ·
+  xtts 0.19). A detector that generalizes to generators it never saw is the
+  whole point — a lab-only benchmark never tests this.
 - **Speaker-disjoint validation** (`scripts/train_artifact.py`): whole speaker
-  groups (human speakers AND TTS voices) are held out of training. The reported
-  val accuracy (0.74: bonafide 0.56 / spoof 0.84) measures generalization to
-  *unseen speakers*, not chunk memorization.
-- **Per-class EER** (`scripts/eval_benchmarks.py`): the vocoder-proxy attack
-  class is reported separately from real neural TTS — the proxy is corpus
-  training variety, not a claimed capability.
-- **Telephony degradation sweep** (`scripts/eval_telephony.py`): clean → 8 kHz
-  narrowband → μ-law → 20 dB noise → 2% packet loss. Current layer-A EER:
-  0.18 clean → 0.26 worst case — the quantified cost of codec-blind training,
-  and the case for week-3 codec augmentation.
+  groups held out. Val acc 0.85 (bonafide 0.91 / spoof 0.57) on unseen speakers
+  — the bonafide side is what protects genuine callers from false blocks.
+- **Per-class EER** (`scripts/eval_benchmarks.py`): fused EER 0.10 excluding the
+  vocoder-proxy class (a corpus training variety, not a claimed capability).
+- **Telephony degradation sweep** (`scripts/eval_telephony.py`): fused EER
+  0.15 clean → 0.32 worst case across 8 kHz/μ-law/noise/packet-loss — the
+  quantified case for codec-aware training.
 - **Known limitation, documented not hidden:** the SSL layer misses modern Edge
   neural TTS at call level (0.08); the artifact layer covers it. Fusion exists
   precisely because single layers fail differently.
 
-| Metric | Target (real data, roadmap) |
-|---|---|
-| EER on ASVspoof 2021/5 LA (dev) | < 2% |
-| EER leave-one-generator-out (own 2026 corpus) | < 6% |
-| EER in-the-wild 2024+ deepfake sets | < 8% |
-| p95 chunk latency | < 300 ms |
-| Edge bundle (ONNX, layer A) | < 10 MB |
+| Metric | Current (own corpus) | Target |
+|---|---|---|
+| LOTO mean held-out EER | **0.12** | < 0.06 (more generator families) |
+| Speaker-disjoint val acc | **0.85** | > 0.90 (more human speakers) |
+| Fused EER (own corpus, excl. proxy) | **0.10** | — |
+| Telephony worst-case fused EER | 0.32 | < 0.10 (codec augmentation) |
+| p95 chunk latency | — | < 300 ms |
+| Edge bundle (ONNX, layer A) | — | < 10 MB |
