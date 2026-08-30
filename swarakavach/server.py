@@ -22,6 +22,7 @@ from fastapi.responses import FileResponse, JSONResponse
 
 from . import audit
 from . import config
+from . import asr as asr_mod
 from .audio import iter_chunks, load_wav_bytes, pcm16_to_float
 from .detectors import artifact, context as ctx_engine, intent, speaker, ssl_detector
 from .fusion import RiskEngine
@@ -33,7 +34,12 @@ SESSIONS: dict[str, dict] = {}
 
 
 def run_session(wav: np.ndarray, context: dict | None, speaker_id: str | None,
-                session_id: str | None = None, transcript: str | None = None) -> dict:
+                session_id: str | None = None, transcript: str | None = None,
+                asr: bool = True) -> dict:
+    """Analyze a full call. Transcript priority: explicit > live ASR (if
+    enabled and available) > None (intent layer abstains)."""
+    if transcript is None and asr and asr_mod.available():
+        transcript = asr_mod.transcribe(wav) or None
     engine = RiskEngine(context)
     for chunk in iter_chunks(wav, config.CHUNK_SAMPLES, config.CHUNK_OVERLAP_SAMPLES):
         engine.update({
@@ -88,14 +94,15 @@ def healthz():
 
 @app.post("/v1/analyze")
 async def analyze(body: bytes = Body(...), speaker_id: str | None = Query(None),
-                  context: str | None = Query(None), transcript: str | None = Query(None)):
+                  context: str | None = Query(None), transcript: str | None = Query(None),
+                  asr: bool = Query(True)):
     try:
         wav = load_wav_bytes(body)
     except Exception as e:
         return JSONResponse(status_code=400, content={"error": f"bad audio: {e}"})
     ctx = json.loads(context) if context else None
     # scoring is CPU-heavy (all layers, every chunk) — keep the event loop free
-    return await asyncio.to_thread(run_session, wav, ctx, speaker_id, None, transcript)
+    return await asyncio.to_thread(run_session, wav, ctx, speaker_id, None, transcript, asr)
 
 
 @app.post("/v1/enroll")
@@ -135,11 +142,16 @@ def audit_decision(incident_id: str, decision: str = Query(...),
 async def stream(ws: WebSocket, speaker_id: str | None = Query(None),
                  context: str | None = Query(None), transcript: str | None = Query(None)):
     """Live stream protocol: client sends binary PCM16LE 16k-mono frames;
-    server replies per-chunk risk events; text frame 'END' finalizes."""
+    server replies per-chunk risk events; text frame 'END' finalizes.
+    Without an explicit transcript, a rolling ASR transcriber feeds the intent
+    layer from the live audio (4 s rolling windows)."""
     await ws.accept()
     engine = RiskEngine(json.loads(context) if context else None)
     sid = uuid.uuid4().hex[:12]
     buf = np.zeros(0, dtype=np.float32)
+    trans = None
+    if transcript is None and asr_mod.available():
+        trans = asr_mod.StreamingTranscriber()
     try:
         while True:
             msg = await ws.receive()
@@ -155,18 +167,26 @@ async def stream(ws: WebSocket, speaker_id: str | None = Query(None),
             buf = np.concatenate([buf, pcm16_to_float(data)])
             while len(buf) >= config.CHUNK_SAMPLES:
                 chunk, buf = buf[: config.CHUNK_SAMPLES], buf[config.CHUNK_SAMPLES:]
+                live_tr = transcript
+                if trans is not None:
+                    utt = await asyncio.to_thread(trans.feed, chunk)
+                    if utt:
+                        live_tr = " ".join(trans.text_parts)
                 ev = engine.update({
                     "artifact": artifact.score(chunk),
                     "ssl": await asyncio.to_thread(ssl_detector.score, chunk),
                     "speaker": speaker.score(speaker_id, chunk) if speaker_id else None,
                     "context": ctx_engine.score(engine.context),
-                    "intent": intent.score(transcript),
+                    "intent": intent.score(live_tr),
                 })
+                if utt:
+                    ev["transcript_delta"] = utt
                 await ws.send_text(json.dumps({"session_id": sid, **ev}))
         verdict = engine.verdict()
+        final_tr = transcript or (" ".join(trans.text_parts) if trans else None)
         SESSIONS[sid] = {"session_id": sid, "ts": time.time(), "context": engine.context,
                          "speaker_id": speaker_id, "verdict": verdict,
-                         "transcript": transcript,
+                         "transcript": final_tr,
                          "trajectory": engine.trajectory, "layers": engine.layer_history}
         if verdict["level"] in ("HIGH", "CRITICAL"):
             audit.incident(SESSIONS[sid], model_version=app.version)

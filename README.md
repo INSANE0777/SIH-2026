@@ -109,12 +109,13 @@ build step, single HTML file.
 | Layer B SSL detector | **Working** — `Hemgg/Deepfake-audio-detection` (wav2vec2, ASVspoof-based); validated: human 0.03 / SAPI TTS 0.98 / Edge neural TTS 0.08 (misses modern neural TTS — documented; layer A covers it) |
 | Layer C speaker consistency | **Working** — prosody+LFCC voiceprint, cosine distance; abstains without enrollment |
 | Layer D context rules | **Working** — deterministic metadata risk rules |
-| Layer E intent rules | **Working** — bilingual (EN/HI, Devanagari + romanized) social-engineering rule engine with per-rule explainability; transcript comes from ASR in production |
+| Layer E intent rules | **Working — fed by live ASR** — bilingual (EN/HI, Devanagari + romanized) social-engineering rule engine with per-rule explainability. ASR: whisper medium fp16 CUDA (RTF 0.11), auto-detects Hindi/English; Devanagari keywords match fuzzily against ASR-mangled TTS Hindi (edit distance ≤2 + homophone normalization) — the Hindi attacker demo fires all four rule categories on real ASR output |
 | Telephony robustness | **Trained-for + measured** — real ffmpeg codec pipelines (AMR-NB 4.75k cellular, Opus 8k/16k VoIP, packet loss, EVS-style profile) are encoded into training corpora (`scripts/make_codec_corpora.py`). Fused EER: clean 0.08 → worst case 0.19 (pre-codec-training it was 0.15 → 0.32) |
 | Audit chain | **Working** — hash-chained, tamper-evident incident ledger + supervisor decisions; chain verification unit-tested |
 | ASVspoof 2019/2021/5 training | **Planned** — `train_artifact.py --asvspoof-dir` already accepts the ASVspoof2019 LA layout |
 | Real 2026 clone corpus (F5-TTS, RVC, Fish Speech) + broader LOTO | **Next** — 4 generator families implemented (Edge, Piper, SAPI, XTTS-v2); adding F5-TTS/RVC strengthens the LOTO claim further |
-| Indic-language ASR → live intent pipeline | **Planned** — AI4Bharat IndicVoices/Shrutilipi data already in the roadmap |
+| Indic-language ASR → live intent pipeline | **Working** — `swarakavach/asr.py` (faster-whisper, whisper medium): REST auto-transcribes when no transcript is given; WS path uses a rolling 4 s window transcriber streaming `transcript_delta` events; the finale demo runs entirely on live ASR |
+| Streaming latency | **Measured** — `scripts/eval_latency.py`: fused chunk pipeline **p95 = 108 ms** (target < 300 ms; artifact 2 ms, speaker 5 ms, wav2vec2 85 ms dominates); ASR RTF 0.11 |
 
 We deliberately ship the corpus generator instead of committed audio so every
 number in this repo is reproducible from code — and we label which numbers are
@@ -152,7 +153,7 @@ be flagged accordingly.
 2. **Week 3–4:** telephony-realistic augmentation (μ-law 8 kHz, AMR/EVS/Opus
    codec simulation, MUSAN noise, RIR reverb, packet loss) folded into training
    — the eval_telephony deltas show exactly what it buys.
-3. **Week 5–6:** Indic language data (AI4Bharat IndicVoices/Shrutilipi/Kathbath),
-   ASR → live intent pipeline, streaming latency budget (p95 < 300 ms/chunk),
-   gRPC + Twilio Media Streams demo.
+3. **Week 5–6:** ASR → live intent pipeline **done** (whisper medium, RTF 0.11, Hindi fuzzy
+   intent matching); latency **measured** (p95 = 108 ms < 300 ms target). Next within this
+   block: AI4Bharat IndicVoices/Shrutilipi audio coverage, gRPC + Twilio Media Streams demo.
 4. **Week 7–8:** ONNX edge export (< 10 MB bundle), dashboard polish, demo freeze.

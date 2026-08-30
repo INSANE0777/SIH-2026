@@ -1,12 +1,57 @@
 """Layer E — conversation-intent risk: rule-based social-engineering signals.
 
-Answers "is what they are asking for dangerous?" — independent of whether the
-voice is synthetic. Input is a call transcript (from ASR in production; passed
-explicitly by the API/demo caller here). Bilingual keyword rules (English +
-Hindi, romanized and Devanagari). Deliberately simple, auditable and
-explainable: every score comes with the list of matched rules.
+Answers "is what they are asking for dangerous?" - independent of whether the
+voice is synthetic. Input is a call transcript - from live ASR (swarakavach/
+asr.py) in production, or passed explicitly by API/demo callers. Bilingual
+keyword rules (English + Hindi, romanized and Devanagari).
+
+ASR output is noisy (TTS-warped Hindi comes back as a mangled word), so
+Devanagari keywords match FUZZILY (edit distance <= 1 per token) - exact
+substring matching silently missed the Hindi attacker in testing. Every score
+carries the matched rules (auditable by design). Swap in a fine-tuned
+IndicBERT classifier if keyword precision becomes the ceiling.
 """
 import re
+
+
+def _devanagari_norm(s: str) -> str:
+    """Normalize Devanagari for fuzzy comparison: strip trailing/inherent
+    virama marks, unify homophones (anusvara ~ n, sibilants, ba/va) —
+    TTS+ASR output like 'प्रभंदक'/'ट्रान्स्फर'/'लाक्' still matches
+    'प्रबंधक'/'ट्रांसफर'/'लाख' after this transform."""
+    s = (s.replace("्", "")            # virama (halant)
+          .replace("ं", "न")      # anusvara -> n
+          .replace("ष", "स")      # ssa -> sa
+          .replace("श", "स")      # sha -> sa
+          .replace("व", "ब"))     # va -> ba (common ASR swap)
+    return s
+
+
+def _fuzzy_word_in(word: str, text: str) -> bool:
+    """True if `word` appears in `text` allowing <= max_dist edits per token.
+    TTS+ASR mangle Devanagari inflections; exact matching missed real attacks."""
+    if word in text:
+        return True
+    # Devanagari words are long; 2 edits for >=6-char words stays specific
+    max_dist = 2 if len(word) >= 6 else 1
+
+    def lev(a: str, b: str) -> int:
+        if abs(len(a) - len(b)) > max_dist:
+            return max_dist + 1
+        prev = list(range(len(b) + 1))
+        for i, ca in enumerate(a, 1):
+            cur = [i]
+            for j, cb in enumerate(b, 1):
+                cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (ca != cb)))
+            prev = cur
+        return prev[-1]
+
+    word = _devanagari_norm(word)
+    for tok in text.split():
+        w = _devanagari_norm(tok.strip("।,!?;:'\""))
+        if abs(len(w) - len(word)) <= max_dist and lev(word, w) <= max_dist:
+            return True
+    return False
 
 RULES = {
     "fund_transfer": {
@@ -42,20 +87,24 @@ RULES = {
 
 def matched_rules(transcript: str) -> list[str]:
     """Which rule categories the transcript triggers. Short ASCII keywords
-    (e.g. 'otp', 'pin', 'cbi') match whole-word only — 'pin' must not fire
-    inside 'pincode'... though in fraud calls it usually is the PIN anyway."""
+    (e.g. 'otp', 'pin', 'cbi') match whole-word only; Devanagari keywords
+    match fuzzily against ASR-noisy text."""
     if not transcript:
         return []
-    t = transcript.lower()
+    t = re.sub(r"\s+", " ", transcript.lower()).strip()
 
     def hit(rule) -> bool:
-        import re as _re
         for kw in rule["keywords"]:
-            if kw in t:
-                if kw.isascii() and kw.isalpha() and len(kw) <= 5:
-                    if _re.search(rf"\b{_re.escape(kw)}\b", t):
+            if kw.isascii():
+                # ASCII: short alpha keywords word-boundary matched; phrases substring
+                if kw.isalpha() and len(kw) <= 5:
+                    if re.search(rf"\b{re.escape(kw)}\b", t):
                         return True
-                else:
+                elif kw in t:
+                    return True
+            else:
+                # Devanagari: fuzzy word match (ASR mangles TTS Hindi)
+                if _fuzzy_word_in(kw, t):
                     return True
         return False
 

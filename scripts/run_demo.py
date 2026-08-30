@@ -1,9 +1,12 @@
 """CLI finale-demo rehearsal: enroll the 'regional manager', then run four calls.
 
 Call 1 — genuine manager    → LOW      → transaction proceeds
-Call 2 — cloned manager     → HIGH     → HOLD + liveness challenge + supervisor
+Call 2 — cloned manager     → CRITICAL → HOLD + liveness challenge + supervisor
 Call 3 — TTS attacker (EN)  → CRITICAL → all actions (SSL layer misses it; layer A catches)
-Call 4 — TTS attacker (HI)  → CRITICAL → multilingual attack; intent rules fire in Hindi
+Call 4 — TTS attacker (HI)  → CRITICAL → multilingual; ASR feeds Hindi intent rules
+
+Transcripts come from LIVE ASR (whisper, GPU) — no hardcoded text; the demo
+shows the production transcript path, including its noise on TTS Hindi.
 
 Usage: python scripts/run_demo.py [--scenario-dir data/demo/scenario]
 """
@@ -12,27 +15,13 @@ from pathlib import Path
 
 import numpy as np
 
+from swarakavach import asr as asr_mod
 from swarakavach import config
 from swarakavach.audio import iter_chunks, load_wav
 from swarakavach.detectors import artifact, context as ctx_engine, intent, speaker, ssl_detector
 from swarakavach.fusion import RiskEngine
 
 CTX = {"caller_id_match": "false", "enrolled_contact": "true", "tx_amount": 5_000_000}
-
-TRANSCRIPTS = {
-    # genuine call: routine, no social-engineering markers
-    "genuine": "Team, please review the monthly compliance report when you get a chance.",
-    # cloned manager: urgent transfer + secrecy + authority
-    "clone": ("Hello, this is the regional manager. I need you to approve the fifty lakh "
-              "rupees transfer immediately. It is extremely urgent. Do not discuss this "
-              "with anyone else."),
-    # English TTS attacker: OTP + transfer + urgency + authority
-    "attacker": ("This is the bank manager calling. Please share the OTP and your PIN "
-                 "right now so we can complete the urgent rupees transfer."),
-    # Hindi TTS attacker: transfer + urgency + secrecy + authority (Devanagari rules)
-    "hindi": ("नमस्ते, मैं क्षेत्रीय प्रबंधक बोल रहा हूँ। पचास लाख रुपये का ट्रांसफर "
-              "तुरंत स्वीकृत करें। यह बात किसी से न कहें।"),
-}
 
 BREAKDOWN_LABELS = [
     ("voice_authenticity_risk", "voice authenticity"),
@@ -42,13 +31,20 @@ BREAKDOWN_LABELS = [
 ]
 
 
-def call(name: str, wav_path: Path, speaker_id: str, transcript: str) -> RiskEngine:
+def call(name: str, wav_path: Path, speaker_id: str) -> RiskEngine:
     engine = RiskEngine(dict(CTX))
     print(f"\n-- incoming call: {name} ({wav_path.name}) --")
+    wav = load_wav(wav_path)
+    transcript = None
+    if asr_mod.available():
+        transcript = asr_mod.transcribe(wav) or None
     if transcript:
         ix = intent.explain(transcript)
+        print(f"  ASR heard: {ix and transcript[:80]}")
         print(f"  intent rules: {ix['matched'] or 'none'}")
-    for i, chunk in enumerate(iter_chunks(load_wav(wav_path)), 1):
+    else:
+        print("  (ASR unavailable — intent layer abstains)")
+    for i, chunk in enumerate(iter_chunks(wav), 1):
         ev = engine.update({
             "artifact": artifact.score(chunk),
             "ssl": ssl_detector.score(chunk),
@@ -85,17 +81,17 @@ def main():
     speaker.enroll(args.speaker_id, load_wav(real))
     print("layers:", f"artifact={artifact.available()}", f"ssl={ssl_detector.available()}")
 
-    calls = [("genuine", "genuine manager", real, TRANSCRIPTS["genuine"]),
-             ("cloned", "CLONED manager", clone, TRANSCRIPTS["clone"])]
+    calls = [("genuine", "genuine manager", real),
+             ("cloned", "CLONED manager (XTTS zero-shot)", clone)]
     attacker, hindi = sd / "attacker_tts.wav", sd / "attacker_hindi.wav"
     if attacker.exists():
-        calls.append(("attacker_en", "TTS ATTACKER (English)", attacker, TRANSCRIPTS["attacker"]))
+        calls.append(("attacker_en", "TTS ATTACKER (English)", attacker))
     if hindi.exists():
-        calls.append(("attacker_hi", "TTS ATTACKER (Hindi)", hindi, TRANSCRIPTS["hindi"]))
+        calls.append(("attacker_hi", "TTS ATTACKER (Hindi)", hindi))
 
     engines = {}
-    for key, name, path, tr in calls:
-        engines[key] = call(name, path, args.speaker_id, tr)
+    for key, name, path in calls:
+        engines[key] = call(name, path, args.speaker_id)
 
     peaks = {k: max(e.trajectory) for k, e in engines.items()}
     medians = {k: float(np.median(e.trajectory)) for k, e in engines.items()}
