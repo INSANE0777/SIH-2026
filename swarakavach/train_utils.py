@@ -15,12 +15,19 @@ from .features import lfcc
 
 
 class LFCCDataset(Dataset):
-    """Train-time augmentation: gain, pitch shift (resample trick), light noise —
-    forces speaker-invariant anti-spoof features on a tiny multi-speaker corpus."""
+    """Train-time augmentation: gain, pitch shift, light noise, and (optionally)
+    REAL codec roundtrips via ffmpeg — forces speaker- and channel-invariant
+    anti-spoof features on a small multi-speaker corpus.
 
-    def __init__(self, items, augment: bool = False, seed: int = 0):
+    codec_augment uses ffmpeg subprocesses (~50 ms/call); prefer pre-
+    materialized codec corpora (codecs.materialize_codec_corpus) for big data,
+    keep this for small-corpuses/LOTO folds."""
+
+    def __init__(self, items, augment: bool = False, seed: int = 0,
+                 codec_augment: bool = False):
         self.items = items
         self.augment = augment
+        self.codec_augment = codec_augment
         self.rng = np.random.default_rng(seed)
 
     def _aug(self, wav: np.ndarray) -> np.ndarray:
@@ -40,6 +47,9 @@ class LFCCDataset(Dataset):
     def __getitem__(self, i):
         path, label = self.items[i]
         wav = load_wav(path)
+        if self.codec_augment:
+            from .codecs import augment_random
+            wav = augment_random(wav, rng=self.rng)
         if self.augment:
             wav = self._aug(wav)
         f = lfcc(wav)
@@ -60,11 +70,12 @@ def collate(batch):
 
 
 def speaker_key(path: str) -> str:
-    """Group key for speaker-disjoint splits: strip family prefixes and chunk
-    index(es), so a speaker and their clones share one group.
-    human/jfk_03.wav -> jfk · xtts_jfk_03.wav -> jfk · edge_neerja_02 -> neerja
+    """Group key for speaker-disjoint splits: strip family/codec prefixes
+    (repeatedly) and chunk index(es), so a speaker, their clones, AND codec
+    copies of both share one group — no speaker leakage across the split.
+    human/jfk_03.wav -> jfk · xtts_jfk_03.wav -> jfk · amr_jfk_03.wav -> jfk
     """
-    stem = re.sub(r"^(voc_|edge_|xtts_|human_)", "", Path(path).stem)
+    stem = re.sub(r"^(voc_|edge_|xtts_|human_|amr_|opus_|opus_wb_|evs_like_)+", "", Path(path).stem)
     return re.sub(r"(?:_\d+)+$", "", stem)
 
 
@@ -100,7 +111,8 @@ def per_speaker_balance(items):
     return balanced
 
 
-def train_cnn(train_items, epochs: int = 30, silent: bool = False):
+def train_cnn(train_items, epochs: int = 30, silent: bool = False,
+              codec_augment: bool = False):
     """Train a fresh ArtifactCNN on [(path, label)] items with augmentation,
     per-SPEAKER class balancing (a speaker's real clips must not be outnumbered
     10:1 by their clones, or the CNN learns 'this voice = spoof'), and global
@@ -115,17 +127,19 @@ def train_cnn(train_items, epochs: int = 30, silent: bool = False):
         items = items + [it for it in items if it[1] == 0] * mult
         random.shuffle(items)
 
-    dl = DataLoader(LFCCDataset(items, augment=True), batch_size=16,
-                    shuffle=True, collate_fn=collate)
-    model = ArtifactCNN()
+    dl = DataLoader(LFCCDataset(items, augment=True, codec_augment=codec_augment),
+                    batch_size=16, shuffle=True, collate_fn=collate)
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    model = ArtifactCNN().to(device)
     opt = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-4)
-    w = torch.tensor([len(items) / (2 * max(n_neg, 1)), len(items) / (2 * max(n_pos, 1))])
+    w = torch.tensor([len(items) / (2 * max(n_neg, 1)), len(items) / (2 * max(n_pos, 1))]).to(device)
     lossf = nn.CrossEntropyLoss(weight=w)
 
     for ep in range(epochs):
         model.train()
         tot = 0.0
         for x, y in dl:
+            x, y = x.to(device), y.to(device)
             opt.zero_grad()
             loss = lossf(model(x), y)
             loss.backward()
@@ -134,4 +148,4 @@ def train_cnn(train_items, epochs: int = 30, silent: bool = False):
         if not silent:
             print(f"  epoch {ep+1:02d}  train_loss={tot/len(items):.4f}")
     model.eval()
-    return model
+    return model.to("cpu")  # callers score on CPU

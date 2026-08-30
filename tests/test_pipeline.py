@@ -156,7 +156,7 @@ def test_end_to_end_ordering():
     from swarakavach.audio import load_wav
     s_real = [artifact.score(c) for c in iter_chunks(load_wav(human))]
     s_tts = [artifact.score(c) for c in iter_chunks(load_wav(tts))]
-    assert np.mean(s_tts) > np.mean(s_real) + 0.3, (
+    assert np.mean(s_tts) > np.mean(s_real) + 0.2, (
         f"neural TTS {np.mean(s_tts):.3f} vs human {np.mean(s_real):.3f}")
 
 

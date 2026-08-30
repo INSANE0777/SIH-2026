@@ -10,8 +10,9 @@ pip install -r requirements.txt && pip install -e .
 python scripts/make_demo_data.py      # demo corpus + scenario (network once)
 python scripts/make_clone_corpus.py   # 4 attack families + XTTS clones (GPU ~6 min)
 python scripts/prepare_libri.py       # 40-speaker bonafide diversity (~4000 chunks)
+python scripts/make_codec_corpora.py # REAL codec copies of everything (ffmpeg; ~10 min)
 python scripts/train_artifact.py --labels data/demo/labels.csv \
-    --extra-labels data/clone-corpus/chunks/labels.csv,data/libri-human/chunks/labels.csv
+    --extra-labels data/demo/codec/labels.csv,data/clone-corpus/chunks/labels.csv,data/clone-corpus/chunks/codec/labels.csv,data/libri-human/chunks/labels.csv,data/libri-human/chunks/codec/labels.csv
 ```
 
 ## 1. Four-call demo (the finale script)
@@ -79,14 +80,13 @@ re-run `GET /v1/audit` → `chain_valid: false, broken_at: N`.
 
 ```bash
 python scripts/eval_benchmarks.py
-# EER artifact 0.13 · ssl 0.51 · fused 0.15 (full corpus incl. proxies)
-# excluding vocoder-proxy class: fused 0.10
+# EER artifact 0.07 · ssl 0.51 · fused 0.07 (full corpus)
 
 python scripts/eval_loto.py     # leave-one-generator-out — the core claim
-# held-out family EER: edge 0.16 · piper 0.05 · sapi 0.09 · xtts 0.19, mean 0.12
+# held-out family EER: edge 0.13 · piper 0.12 · sapi 0.03 · xtts 0.23, mean 0.13
 
-python scripts/eval_telephony.py
-# clean fused EER 0.15 -> 0.32 worst case (narrowband/mu-law/noise/packet loss)
+python scripts/eval_telephony.py    # REAL codec sweep (AMR-NB/Opus/PL)
+# fused EER: clean 0.08 -> worst case 0.19 (codec-trained; pre-codec was 0.15 -> 0.32)
 ```
 
 The SSL EER on this corpus is high **on purpose** — the corpus is dominated by
@@ -120,9 +120,13 @@ that is the honest generalization claim.
   is stored — privacy by design.
 - *"How do you know it generalizes?"* — leave-one-generator-out: we train
   WITHOUT one attack family and it still catches that family (mean held-out EER
-  0.12 today, target < 0.06 as families grow). In-the-wild attackers are, by
+  0.13 today, target < 0.06 as families grow). In-the-wild attackers are, by
   definition, generators we have never seen — this is the only protocol that
   measures that.
+- *"What about phone-call audio quality?"* — we train on REAL codec-processed
+  copies (AMR-NB cellular, Opus VoIP via ffmpeg) of every clip. Worst-case
+  channel EER is 0.19, and before codec training the same model measured 0.32 —
+  we can show both numbers, from the same eval script.
 - *"Is this trained on ASVspoof?"* — the bootstrap model in the repo trains on a
   reproducible public-speech + neural-TTS corpus with speaker-disjoint
   validation; the ASVspoof2019 loader is implemented and is week-1 work

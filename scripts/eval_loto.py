@@ -48,6 +48,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--manifest", default=str(config.DATA_DIR / "clone-corpus" / "manifest.csv"))
     ap.add_argument("--epochs", type=int, default=30)
+    ap.add_argument("--codec-augment", action="store_true",
+                    help="train folds with real codec augmentation (needs ffmpeg)")
     ap.add_argument("--cache", default=str(config.DATA_DIR / "clone-corpus" / "chunks"))
     args = ap.parse_args()
 
@@ -67,7 +69,8 @@ def main():
     for hold in families:
         train = [it[:2] for it in items if it[2] != hold and it[2] != "human"] + [it[:2] for it in human]
         test = [it[:2] for it in items if it[2] == hold] + [it[:2] for it in human]
-        model = train_cnn(train, epochs=args.epochs, silent=True)
+        model = train_cnn(train, epochs=args.epochs, silent=True,
+                          codec_augment=args.codec_augment)
         scores, ys = [], []
         model.eval()
         with torch.no_grad():

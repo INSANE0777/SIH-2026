@@ -10,6 +10,8 @@ Usage: python scripts/run_demo.py [--scenario-dir data/demo/scenario]
 import argparse
 from pathlib import Path
 
+import numpy as np
+
 from swarakavach import config
 from swarakavach.audio import iter_chunks, load_wav
 from swarakavach.detectors import artifact, context as ctx_engine, intent, speaker, ssl_detector
@@ -96,10 +98,14 @@ def main():
         engines[key] = call(name, path, args.speaker_id, tr)
 
     peaks = {k: max(e.trajectory) for k, e in engines.items()}
-    print(f"\npeaks: { {k: round(v, 3) for k, v in peaks.items()} }")
-    ok = peaks["cloned"] > peaks["genuine"] + 0.1
-    print(f"{'PASS' if ok else 'FAIL'}: clone peak {peaks['cloned']:.3f} "
-          f"vs genuine peak {peaks['genuine']:.3f}")
+    medians = {k: float(np.median(e.trajectory)) for k, e in engines.items()}
+    print(f"\npeaks:   { {k: round(v, 3) for k, v in peaks.items()} }")
+    print(f"medians: { {k: round(v, 3) for k, v in medians.items()} }")
+    # the median-robust verdict is the system's real decision rule: a single
+    # glitchy chunk (e.g. a musical opening fanfare) must not read as an attack
+    ok = medians["cloned"] > medians["genuine"] + 0.1
+    print(f"{'PASS' if ok else 'FAIL'}: clone median {medians['cloned']:.3f} "
+          f"vs genuine median {medians['genuine']:.3f}")
     raise SystemExit(0 if ok else 1)
 
 

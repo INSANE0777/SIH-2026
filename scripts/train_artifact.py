@@ -48,6 +48,8 @@ def main():
     ap.add_argument("--extra-labels", default=None,
                     help="extra labeled csv(s), comma-separated — e.g. the clone "
                          "corpus manifest (path,family,label) for family diversity")
+    ap.add_argument("--codec-augment", action="store_true",
+                    help="real codec roundtrips (ffmpeg AMR-NB/Opus) during training")
     ap.add_argument("--asvspoof-dir", default=None, help="ASVspoof2019 LA root (overrides --labels)")
     ap.add_argument("--epochs", type=int, default=15)
     ap.add_argument("--out", default=str(config.ARTIFACT_CKPT))
@@ -96,18 +98,22 @@ def main():
     n_pos = sum(1 for _, l in train if l == 1)
     n_neg = len(train) - n_pos
 
-    dl = DataLoader(LFCCDataset(train, augment=True), batch_size=16, shuffle=True, collate_fn=collate)
+    dl = DataLoader(LFCCDataset(train, augment=True, codec_augment=args.codec_augment),
+                    batch_size=16, shuffle=True, collate_fn=collate)
     vdl = DataLoader(LFCCDataset(val), batch_size=16, collate_fn=collate)
 
-    model = ArtifactCNN()
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"training on {device}")
+    model = ArtifactCNN().to(device)
     opt = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-4)
-    w = torch.tensor([len(train) / (2 * max(n_neg, 1)), len(train) / (2 * max(n_pos, 1))])
+    w = torch.tensor([len(train) / (2 * max(n_neg, 1)), len(train) / (2 * max(n_pos, 1))]).to(device)
     lossf = nn.CrossEntropyLoss(weight=w)
 
     for ep in range(args.epochs):
         model.train()
         tot = 0.0
         for x, y in dl:
+            x, y = x.to(device), y.to(device)
             opt.zero_grad()
             loss = lossf(model(x), y)
             loss.backward()
@@ -118,6 +124,7 @@ def main():
         cls = {0: [0, 0], 1: [0, 0]}  # label -> [correct, total]
         with torch.no_grad():
             for x, y in vdl:
+                x, y = x.to(device), y.to(device)
                 pred = model(x).argmax(-1)
                 correct += int((pred == y).sum())
                 n += len(y)
@@ -130,8 +137,8 @@ def main():
               f"(bonafide={bon:.2f} spoof={spf:.2f})")
 
     config.MODELS_DIR.mkdir(parents=True, exist_ok=True)
-    torch.save({"state_dict": model.state_dict(), "n_lfcc": config.LFCC_COEFFS,
-                "val_acc": correct / n}, args.out)
+    torch.save({"state_dict": model.to("cpu").state_dict(), "n_lfcc": config.LFCC_COEFFS,
+                "val_acc": correct / n, "codec_trained": args.codec_augment}, args.out)
     print(f"saved {args.out} (val_acc={correct/n:.4f})")
 
 

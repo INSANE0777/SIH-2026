@@ -61,6 +61,17 @@ keywords (explainability payload). Transcript input comes from ASR in production
 are auditable by design — swap in a fine-tuned IndicBERT classifier if keyword
 precision becomes the ceiling.
 
+### Codec-aware training (week 3, done)
+
+`swarakavach/codecs.py` + `scripts/make_codec_corpora.py`: every training clip
+is encoded through REAL ffmpeg codec pipelines (AMR-NB 4.75 kbps — the worst
+cellular rate — plus Opus 8k/16k VoIP), materialized once on disk and trained
+alongside the clean copies. The detector learns codec artifacts as part of
+'bonafide channel noise' instead of confusing them with spoof artifacts.
+Measured effect: worst-case channel fused EER halves (0.32 → 0.19). NB: this
+ffmpeg build has no AMR-WB/EVS encoders — Opus profiles cover wideband VoIP
+and the EVS-style level is a documented approximation (AMR-NB + noise).
+
 ### Incident audit chain
 `swarakavach/audit.py` — every HIGH/CRITICAL verdict appends a hash-chained
 record (SHA-256, each record embeds the previous hash) to an append-only JSONL
@@ -139,26 +150,28 @@ from anyone's paper:
 
 - **Leave-one-generator-out (LOTO)** (`scripts/eval_loto.py`): for each attack
   family, train layer A on the other three families + human speech, test on the
-  held-out family. **Mean held-out EER 0.12** (edge 0.16 · piper 0.05 · sapi 0.09 ·
-  xtts 0.19). A detector that generalizes to generators it never saw is the
+  held-out family. **Mean held-out EER 0.13** (edge 0.13 · piper 0.12 · sapi 0.03 ·
+  xtts 0.23). A detector that generalizes to generators it never saw is the
   whole point — a lab-only benchmark never tests this.
 - **Speaker-disjoint validation** (`scripts/train_artifact.py`): whole speaker
   groups held out. Val acc 0.85 (bonafide 0.91 / spoof 0.57) on unseen speakers
   — the bonafide side is what protects genuine callers from false blocks.
 - **Per-class EER** (`scripts/eval_benchmarks.py`): fused EER 0.10 excluding the
   vocoder-proxy class (a corpus training variety, not a claimed capability).
-- **Telephony degradation sweep** (`scripts/eval_telephony.py`): fused EER
-  0.15 clean → 0.32 worst case across 8 kHz/μ-law/noise/packet-loss — the
-  quantified case for codec-aware training.
+- **Telephony degradation sweep** (`scripts/eval_telephony.py`): REAL ffmpeg
+  codec roundtrips (AMR-NB 4.75k, Opus 8k/16k, packet loss, EVS-style profile).
+  Codec-trained fused EER: clean 0.08 → worst case 0.19 (the same model before
+  codec training measured 0.15 → 0.32 — codec-aware training halves the
+  channel penalty).
 - **Known limitation, documented not hidden:** the SSL layer misses modern Edge
   neural TTS at call level (0.08); the artifact layer covers it. Fusion exists
   precisely because single layers fail differently.
 
 | Metric | Current (own corpus) | Target |
 |---|---|---|
-| LOTO mean held-out EER | **0.12** | < 0.06 (more generator families) |
-| Speaker-disjoint val acc | **0.85** | > 0.90 (more human speakers) |
-| Fused EER (own corpus, excl. proxy) | **0.10** | — |
-| Telephony worst-case fused EER | 0.32 | < 0.10 (codec augmentation) |
+| LOTO mean held-out EER | **0.13** | < 0.06 (more generator families) |
+| Speaker-disjoint val acc | **0.78** (bonafide 0.88) | > 0.90 (more human speakers) |
+| Fused EER (demo corpus) | **0.07** | — |
+| Telephony worst-case fused EER | **0.19** (pre-codec: 0.32) | < 0.10 |
 | p95 chunk latency | — | < 300 ms |
 | Edge bundle (ONNX, layer A) | — | < 10 MB |

@@ -104,13 +104,13 @@ build step, single HTML file.
 |---|---|
 | Fusion + risk engine + policy actions + explainable breakdown | **Working**, unit-tested |
 | REST + WebSocket API + dashboard + incident ledger | **Working**, end-to-end tested |
-| Layer A artifact CNN | **Working** — trained on the reproducible corpus: real human speech (16 curated + 40 LibriSpeech speakers) + 4 attack generator families (Edge neural TTS incl. Hindi, Piper local neural TTS, Windows SAPI, **XTTS-v2 zero-shot voice clones of our actual speakers**) + vocoder proxies. **Honest numbers:** speaker-disjoint val acc 0.85 (bonafide 0.91 / spoof 0.57); corpus EER 0.13; **leave-one-generator-out mean held-out EER 0.12** (edge 0.16 / piper 0.05 / sapi 0.09 / xtts 0.19) — measured, not aspirational |
+| Layer A artifact CNN | **Working, codec-trained** — trained on the reproducible corpus: real human speech (16 curated + 40 LibriSpeech speakers) + 4 attack families (Edge, Piper, SAPI, **XTTS-v2 zero-shot clones**) + **AMR-NB/Opus codec copies of everything**. Honest numbers: speaker-disjoint val 0.78 (bonafide 0.88 / spoof 0.72); demo-corpus fused EER **0.07**; **LOTO mean held-out EER 0.13**; telephony worst-case fused EER **0.19** (was 0.32 before codec training) |
 | **Leave-one-generator-out** | **Measured** — `scripts/eval_loto.py`: for each family, train on the other three + humans, test on the held-out family. This is the protocol that predicts in-the-wild performance and the core ML claim. |
 | Layer B SSL detector | **Working** — `Hemgg/Deepfake-audio-detection` (wav2vec2, ASVspoof-based); validated: human 0.03 / SAPI TTS 0.98 / Edge neural TTS 0.08 (misses modern neural TTS — documented; layer A covers it) |
 | Layer C speaker consistency | **Working** — prosody+LFCC voiceprint, cosine distance; abstains without enrollment |
 | Layer D context rules | **Working** — deterministic metadata risk rules |
 | Layer E intent rules | **Working** — bilingual (EN/HI, Devanagari + romanized) social-engineering rule engine with per-rule explainability; transcript comes from ASR in production |
-| Telephony robustness | **Measured** — `scripts/eval_telephony.py` sweeps clean → 8kHz narrowband → μ-law → noise → packet loss: fused EER 0.15 clean → 0.32 worst case, the quantified cost of codec-blind training (fix = codec augmentation, roadmap) |
+| Telephony robustness | **Trained-for + measured** — real ffmpeg codec pipelines (AMR-NB 4.75k cellular, Opus 8k/16k VoIP, packet loss, EVS-style profile) are encoded into training corpora (`scripts/make_codec_corpora.py`). Fused EER: clean 0.08 → worst case 0.19 (pre-codec-training it was 0.15 → 0.32) |
 | Audit chain | **Working** — hash-chained, tamper-evident incident ledger + supervisor decisions; chain verification unit-tested |
 | ASVspoof 2019/2021/5 training | **Planned** — `train_artifact.py --asvspoof-dir` already accepts the ASVspoof2019 LA layout |
 | Real 2026 clone corpus (F5-TTS, RVC, Fish Speech) + broader LOTO | **Next** — 4 generator families implemented (Edge, Piper, SAPI, XTTS-v2); adding F5-TTS/RVC strengthens the LOTO claim further |
