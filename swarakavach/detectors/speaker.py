@@ -33,6 +33,12 @@ def score(speaker_id: str, wav: np.ndarray, sr: int = config.SAMPLE_RATE):
     p = _path(speaker_id)
     if not p.exists():
         return None
+    from ..audio import frame_rms
+    # near-silent chunks (pauses, hold music gaps) carry no speaker evidence —
+    # scoring them would read every pause as full impersonation mismatch
+    rms = frame_rms(np.asarray(wav, dtype=np.float32), sr)
+    if float(np.median(rms)) < 10 ** (-40 / 20):  # quieter than -40 dBFS
+        return None
     ref = np.load(p)["stats"]
     cur = speaker_stats(wav)
     cos = float(np.dot(ref, cur) / ((np.linalg.norm(ref) * np.linalg.norm(cur)) + 1e-9))

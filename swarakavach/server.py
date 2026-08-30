@@ -94,7 +94,8 @@ async def analyze(body: bytes = Body(...), speaker_id: str | None = Query(None),
     except Exception as e:
         return JSONResponse(status_code=400, content={"error": f"bad audio: {e}"})
     ctx = json.loads(context) if context else None
-    return run_session(wav, ctx, speaker_id, transcript=transcript)
+    # scoring is CPU-heavy (all layers, every chunk) — keep the event loop free
+    return await asyncio.to_thread(run_session, wav, ctx, speaker_id, None, transcript)
 
 
 @app.post("/v1/enroll")
@@ -103,7 +104,7 @@ async def enroll(body: bytes = Body(...), speaker_id: str = Query(...)):
         wav = load_wav_bytes(body)
     except Exception as e:
         return JSONResponse(status_code=400, content={"error": f"bad audio: {e}"})
-    return speaker.enroll(speaker_id, wav)
+    return await asyncio.to_thread(speaker.enroll, speaker_id, wav)
 
 
 @app.get("/v1/sessions/{sid}")

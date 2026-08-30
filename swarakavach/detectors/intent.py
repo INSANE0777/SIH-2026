@@ -41,12 +41,25 @@ RULES = {
 
 
 def matched_rules(transcript: str) -> list[str]:
-    """Which social-engineering rule categories the transcript triggers."""
+    """Which rule categories the transcript triggers. Short ASCII keywords
+    (e.g. 'otp', 'pin', 'cbi') match whole-word only — 'pin' must not fire
+    inside 'pincode'... though in fraud calls it usually is the PIN anyway."""
     if not transcript:
         return []
     t = transcript.lower()
-    return [name for name, r in RULES.items()
-            if any(kw in t for kw in r["keywords"])]
+
+    def hit(rule) -> bool:
+        import re as _re
+        for kw in rule["keywords"]:
+            if kw in t:
+                if kw.isascii() and kw.isalpha() and len(kw) <= 5:
+                    if _re.search(rf"\b{_re.escape(kw)}\b", t):
+                        return True
+                else:
+                    return True
+        return False
+
+    return [name for name, r in RULES.items() if hit(r)]
 
 
 def score(transcript: str | None) -> float | None:
