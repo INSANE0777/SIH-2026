@@ -46,3 +46,7 @@ Baseline (v1.0): LOTO mean 0.113 (edge .155/piper .026/sapi .060/xtts .212); fus
 4. Small-model-is-the-regularizer: bigger CNN = worse LOTO (0.25->0.40). The 105k edge CNN is the right size for the data budget (EXP-6).
 5. Call-level aggregation cuts xtts-fold EER 0.37->0.28 (EXP-7).
 6. ENV: numpy 2.4.6 (pulled by faster-whisper) silently breaks transformers 4.42 entirely; pinned numpy<2.0.
+
+## EXP-5 full table (30-epoch two-sided folds, complete)
+- edge 0.1465 · piper 0.1773 · sapi 0.1812 · xtts 0.2885 · mean 0.1984
+- Note: edge is the EASIEST held-out family (0.147) despite its modern neural TTS — neural voices with consistent vocoder signatures generalize across voices within a family. XTTS zero-shot clones remain the hard case (0.289): the clone inherits the target's real-voice texture, leaving only synthesis artifacts to detect.

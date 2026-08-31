@@ -150,9 +150,11 @@ from anyone's paper:
 
 - **Leave-one-generator-out (LOTO)** (`scripts/eval_loto.py`): for each attack
   family, train layer A on the other three families + human speech, test on the
-  held-out family. **Mean held-out EER 0.20, two-sided protocol** (xtts 0.29 · sapi 0.18;
-  edge/piper in the full LOG) — the test set includes never-seen human
-  speakers alongside the held-out generator, i.e. the deployment condition. A detector that generalizes to generators it never saw is the
+  held-out family. **Mean held-out EER 0.198, two-sided protocol** (edge 0.147 · piper 0.177 ·
+  sapi 0.181 · xtts 0.289 — the hardest family, as expected: zero-shot clones
+  inherit the target's real-voice texture, leaving only synthesis artifacts) —
+  the test set includes never-seen human speakers alongside the held-out
+  generator, i.e. the deployment condition. A detector that generalizes to generators it never saw is the
   whole point — a lab-only benchmark never tests this.
 - **Speaker-disjoint validation** (`scripts/train_artifact.py`): whole speaker
   groups held out. Val acc 0.85 (bonafide 0.91 / spoof 0.57) on unseen speakers
