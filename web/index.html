@@ -57,7 +57,7 @@
     <h2>Call Channel</h2>
     <div class="row"><button id="micBtn">🎙 Start Live Analysis</button></div>
     <div class="row"><input type="text" id="speakerId" placeholder="speaker_id (e.g. regional_manager)"></div>
-    <div class="row"><textarea id="transcript" rows="2" placeholder="call transcript (optional — feeds the social-engineering intent rules; comes from ASR in production)"></textarea></div>
+    <div class="row"><textarea id="transcript" rows="2" placeholder="call transcript (leave EMPTY for live ASR — whisper transcribes the call in real time; type text only to override)"></textarea></div>
     <div class="row"><button id="enrollBtn">Enroll Voiceprint (uploads file)</button>
       <input type="file" id="enrollFile" accept="audio/*" hidden></div>
     <div class="row"><button id="fileBtn">📁 Analyze Audio File</button>
@@ -94,6 +94,8 @@
       <div class="layer" data-k="context"><div class="t"><span>D · Call context — suspicious call?</span><span>—</span></div><div class="bar"><i></i></div></div>
       <div class="layer" data-k="intent"><div class="t"><span>E · Intent — dangerous request?</span><span>—</span></div><div class="bar"><i></i></div></div>
     </div>
+    <h2 style="margin-top:18px">Live Transcript (ASR)</h2>
+    <div class="status" id="asr" style="min-height:34px;font-style:italic">— auto-transcribes when the transcript box is empty —</div>
     <h2 style="margin-top:18px">Incident Ledger (hash-chained)</h2>
     <div class="status" id="audit">no incidents yet</div>
     <h2 style="margin-top:18px">Event Log</h2>
@@ -130,6 +132,7 @@ function onEvent(m){
     el.querySelector('.bar i').style.width=(v==null?0:v*100)+'%';
   }
   traj.push(r); drawSpark();
+  if(m.transcript_delta){$('asr').textContent='"'+m.transcript_delta+'"';}
   log(`chunk ${String(m.chunk).padStart(2,'0')}  risk=${r.toFixed(3)}  ${m.level}${(m.actions||[]).length?'  ⚠ '+m.actions.join(', '):''}`);
 }
 function showFinal(m){

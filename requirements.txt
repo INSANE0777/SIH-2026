@@ -12,3 +12,5 @@ edge-tts>=6.1
 piper-tts>=1.2
 TTS>=0.22,<0.23
 faster-whisper>=1.0
+onnx>=1.16
+onnxruntime>=1.18

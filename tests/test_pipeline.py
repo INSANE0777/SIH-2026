@@ -125,6 +125,27 @@ def test_mulaw_and_bandlimit_are_sane():
         assert len(d) == len(noise)
 
 
+def test_edge_onnx_parity():
+    """Torch-free edge path (numpy LFCC + onnxruntime) must match the torch
+    Detector A scores — this guards the < 10 MB edge deployment claim."""
+    onnx_p = config.MODELS_DIR / "artifact_edge.onnx"
+    consts_p = config.MODELS_DIR / "lfcc_consts.npz"
+    if not (onnx_p.exists() and consts_p.exists()):
+        print("SKIP (run scripts/export_onnx.py once)")
+        return
+    from swarakavach.edge import EdgeArtifact, bundle_size_mb
+    from swarakavach.detectors import artifact
+    from swarakavach.audio import load_wav
+
+    edge = EdgeArtifact()
+    assert bundle_size_mb() < 10
+    for p in ("data/human/jfk.wav", "data/demo/scenario/attacker_tts.wav"):
+        wav = load_wav(p)[: 16000 * 2]
+        for i in range(0, len(wav) - 16000, 16000):
+            ch = wav[i : i + 16000]
+            assert abs(edge.score(ch) - artifact.score(ch)) < 0.01, f"{p} chunk {i}"
+
+
 def test_verdict_has_explainable_breakdown():
     eng = RiskEngine({"caller_id_match": "false", "tx_amount": 5_000_000})
     for _ in range(3):

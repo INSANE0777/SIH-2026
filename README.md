@@ -118,6 +118,7 @@ build step, single HTML file.
 | Real Hindi human speech in training | **Working** — `scripts/prepare_hindi.py`: 9 Hindi speaker groups (603 chunks + codec copies) via HF datasets-server; closed a 44.6% Hindi false-alarm hole |
 | Full-system ablation | **Measured** — `scripts/eval_ablation.py`: layer-by-layer scenario table (A alone already flags the synthetic attacks; B/C/D/E each refine the verdict — and layers E+D are what catch the *real-human* social-engineering call, not just deepfakes) + corpus EER ablation. The 'five independent questions' claim is experimentally grounded |
 | Hindi false-alarm, honest split | **chunk-level 12.9%** (p90 spikes on unseen speakers) but **call-level 0.0%** — 0/27 real Hindi calls reached even MID under the median decision rule; no legitimate Hindi transaction gets held. Chunk spikes decay; the decision rule is call-median |
+| Edge ONNX deployment | **Shipped, measured** — `scripts/export_onnx.py` + `swarakavach/edge.py`: torch-free edge path (numpy LFCC with exact torchaudio parity — max diff 4e-4 — + onnxruntime). **Bundle 0.49 MB** vs the < 10 MB target (fp32 416 KB + int8 115 KB optional + LFCC constants 132 KB); score parity vs torch 0.00001; ~2 ms/chunk on CPU. Layer A runs on-device, B/C/E stay server-side by design |
 | Twilio Media Streams gateway | **Working, verified on simulated frames** — `scripts/twilio_gateway.py`: Twilio mulaw 8kHz WS frames → decode → upsample → same fusion engine (genuine MID / clone HIGH / Hindi attacker CRITICAL in offline simulation); needs a public tunnel + Twilio number for the live-call demo |
 | Streaming latency | **Measured** — `scripts/eval_latency.py`: fused chunk pipeline **p95 = 108 ms** (target < 300 ms; artifact 2 ms, speaker 5 ms, wav2vec2 85 ms dominates); ASR RTF 0.11 |
 
@@ -162,9 +163,10 @@ be flagged accordingly.
 
 **Next (in priority order):**
 
-5. **Full-system ablation** — `scripts/eval_ablation.py` (this release); extend with more scenarios as they're recorded.
+5. ~~**Full-system ablation**~~ — **done**: `scripts/eval_ablation.py` (layer-subset scenario table + corpus EER; the 'five independent questions' claim is measured).
 6. **Live Twilio phone-call demo** — gateway is ready; needs a public tunnel + Twilio number.
 7. **More generator families** (F5-TTS, RVC, OpenVoice) — each strengthens the LOTO claim.
-8. **ONNX edge export** (< 10 MB bundle) + dashboard polish + demo freeze.
+8. **ONNX edge export** — **done**: 0.49 MB torch-free bundle, parity-guarded in tests.
+9. **Demo freeze** — this is it: the 5-call finale below is the demo script.
 
 ASVspoof 2019/2021 LA is optional supporting evidence (65 GB, storage-gated) — it strengthens the story but does not gate it.

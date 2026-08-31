@@ -13,19 +13,55 @@ from . import config
 _lfcc_tf = None
 
 
-def lfcc(wav: np.ndarray, sr: int = config.SAMPLE_RATE) -> np.ndarray:
-    """(n_lfcc, T) Linear-Frequency Cepstral Coefficients matrix."""
-    global _lfcc_tf
-    if _lfcc_tf is None:
-        _lfcc_tf = torchaudio.transforms.LFCC(
-            sample_rate=sr,
-            n_filter=60,
-            n_lfcc=config.LFCC_COEFFS,
-            speckwargs={"n_fft": 512, "win_length": 400, "hop_length": 160, "center": True},
-        )
-    y = torch.from_numpy(np.asarray(wav, dtype=np.float32)).unsqueeze(0)
-    with torch.no_grad():
-        return _lfcc_tf(y).squeeze(0).numpy()
+def _lfcc_numpy(wav: np.ndarray, sr: int) -> np.ndarray:
+    """Pure-numpy LFCC (torch-free edge path): STFT -> power -> linear filter
+    bank -> log -> DCT-II. Matches torchaudio.transforms.LFCC(speckwargs
+    n_fft=512, win=400, hop=160, center=True) within float tolerance.
+    Filter bank: triangular filters on linear frequency scale (n_filter=60).
+    """
+    from .features_np import _triangular_linear_fb, _dct2
+
+    x = np.asarray(wav, dtype=np.float64)
+    n_fft, win, hop = 512, 400, 160
+    pad_l, pad_r = n_fft // 2, n_fft // 2
+    xp = np.concatenate([np.zeros(pad_l - (win // 2)), x[: win // 2] if len(x) else x,
+                         x, np.zeros(pad_r)])
+    # frame the padded signal at hop with win-length windows (zero-padded to n_fft)
+    n_frames = 1 + max(0, (len(xp) - n_fft)) // hop
+    idx = np.arange(n_fft)[None, :] + hop * np.arange(n_frames)[:, None]
+    win_f = np.zeros(n_fft)
+    win_f[: win // 2] = np.hanning(win + 2)[1 : win // 2 + 1]
+    win_f[-(win // 2):] = np.hanning(win + 2)[win // 2 + 1 : -1]
+    frames = xp[idx] * win_f[None, :]
+    spec = np.abs(np.fft.rfft(frames, n_fft, axis=1)) ** 2          # (T, 257)
+    fb = _triangular_linear_fb(n_filters=60, n_fft=n_fft, sr=sr)  # (60, 257)
+    feats = np.log(np.clip(spec @ fb.T, a_min=1e-10, a_max=None) + 1e-10)
+    lfcc = _dct2(feats, n_out=config.LFCC_COEFFS)                 # (T, 20)
+    return lfcc.T.astype(np.float32)                              # (20, T)
+
+
+def lfcc(wav: np.ndarray, sr: int = config.SAMPLE_RATE, backend: str = "auto") -> np.ndarray:
+    """(n_lfcc, T) LFCC matrix. backend: torch | numpy | auto (torch if
+    available, else the numpy edge implementation)."""
+    if backend != "numpy":
+        global _lfcc_tf
+        try:
+            import torch  # noqa: F401
+        except ImportError:
+            backend = "numpy"
+        else:
+            if _lfcc_tf is None:
+                _lfcc_tf = torchaudio.transforms.LFCC(
+                    sample_rate=sr,
+                    n_filter=60,
+                    n_lfcc=config.LFCC_COEFFS,
+                    speckwargs={"n_fft": 512, "win_length": 400, "hop_length": 160,
+                                "center": True},
+                )
+            y = torch.from_numpy(np.asarray(wav, dtype=np.float32)).unsqueeze(0)
+            with torch.no_grad():
+                return _lfcc_tf(y).squeeze(0).numpy()
+    return _lfcc_numpy(wav, sr)
 
 
 def lfcc_mean(wav: np.ndarray) -> np.ndarray:

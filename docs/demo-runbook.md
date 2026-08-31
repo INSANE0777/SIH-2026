@@ -15,18 +15,28 @@ python scripts/train_artifact.py --labels data/demo/labels.csv \
     --extra-labels data/demo/codec/labels.csv,data/clone-corpus/chunks/labels.csv,data/clone-corpus/chunks/codec/labels.csv,data/libri-human/chunks/labels.csv,data/libri-human/chunks/codec/labels.csv
 ```
 
-## 1. Four-call demo (the finale script)
+## 1. Five-call finale demo (the frozen demo script)
 
 ```bash
+# once: record the real-human scam call (10 s at the mic — a teammate reads
+# the script; this is the ONLY scenario that cannot be synthesized honestly)
+python scripts/record_social_engineer.py --check   # verifies it after recording
+
 python scripts/run_demo.py
+python scripts/eval_ablation.py   # the layer-subset table — show this when judges ask 'why five layers?'
 ```
 
-| Call | Audio | Transcript intent rules | Expected verdict | Actions |
+| # | Call | Audio | Expected verdict | What it proves |
 |---|---|---|---|---|
-| Genuine manager | real human speech | none matched | **LOW** (peak ≈ 0.31) | none — transaction proceeds |
-| Cloned manager | **REAL XTTS-v2 zero-shot clone of the enrolled manager's voice** | transfer, urgency, authority | **CRITICAL** (peak ≈ 0.67) | HOLD, LIVENESS, SUPERVISOR, WEBHOOK |
-| OTP attacker (English) | neural TTS, different voice | transfer, **credentials**, urgency, authority | **CRITICAL** (peak ≈ 0.82) | all actions |
-| Hindi attacker | hi-IN neural TTS, Devanagari | ट्रांसफर/लाख, तुरंत, किसी से न, प्रबंधक | **CRITICAL** (peak ≈ 0.84) | all actions |
+| 1 | Genuine manager | real human | **MID** (cautions only, proceeds) | real people aren't blocked |
+| 2 | Exact manager clone | **XTTS-v2 zero-shot clone of the enrolled voice** | **HIGH/CRITICAL → HOLD** | the PS's core attack, caught |
+| 3 | Real human social engineer | real human voice + dangerous ask | voice SAFE, intent **CRITICAL → HOLD** | catches fraud that is NOT deepfake |
+| 4 | OTP attacker (English) | neural TTS | **CRITICAL → HOLD** | credentials-harvest script |
+| 5 | Hindi AI attacker | hi-IN neural TTS | **CRITICAL → HOLD** | live ASR → fuzzy Devanagari rules |
+
+All transcripts come from LIVE ASR (whisper medium, RTF 0.11) — nothing is
+hardcoded. The pitch line: **"Every layer can fail. The system doesn't."** —
+call 5 shows layer B missing Edge neural TTS (p≈0.08) while A catches it at 1.0.
 
 Each verdict prints the **explainable breakdown** — voice authenticity, speaker
 mismatch, call context, social engineering (0–100) — so the audience sees *why*
