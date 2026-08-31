@@ -10,3 +10,4 @@ models/*.pt
 *.flac
 *.mp3
 .DS_Store
+models/ssl_finetuned/

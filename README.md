@@ -105,7 +105,7 @@ build step, single HTML file.
 | Fusion + risk engine + policy actions + explainable breakdown | **Working**, unit-tested |
 | REST + WebSocket API + dashboard + incident ledger | **Working**, end-to-end tested |
 | Layer A artifact CNN | **Working, codec-trained, multilingual** — trained on real human speech (16 curated + 40 LibriSpeech + **9 real Hindi speaker groups**) + 4 attack families (Edge, Piper, SAPI, **XTTS-v2 zero-shot clones**) + AMR-NB/Opus codec copies. Honest numbers: speaker-disjoint val 0.80; demo-corpus fused EER **0.06**; telephony worst-case fused EER **0.14**; Hindi false-alarm rate on real Hindi speech: **12.9%** (was 44.6% before Hindi training data) with Hindi TTS catch-rate still **1.00** |
-| **Leave-one-generator-out** | **Measured** — `scripts/eval_loto.py`: for each family, train on the other three + humans, test on the held-out family. **Mean held-out EER 0.11** — this protocol measures cross-generator generalization and provides a stronger proxy for performance against unseen attack generators than any in-distribution benchmark. |
+| **Leave-one-generator-out** | **Measured, two-sided protocol** — `scripts/eval_loto.py`: for each family, train on all other corpora, test on the held-out family's attacks **plus never-seen human speakers** (both classes unseen — the deployment condition). **Mean held-out EER 0.198** (30-epoch folds; xtts 0.29, sapi 0.18). This measures cross-generator generalization and is a stronger proxy for unseen-attack performance than any in-distribution benchmark. See `experiments/LOG.md` for the protocol's own audit trail — an earlier 0.113 reading was flattered by in-training humans in the test set and a degenerate fold; we fixed both and publish the honest number. |
 | Layer B SSL detector | **Working** — `Hemgg/Deepfake-audio-detection` (wav2vec2, ASVspoof-based); validated: human 0.03 / SAPI TTS 0.98 / Edge neural TTS 0.08 (misses modern neural TTS — documented; layer A covers it) |
 | Layer C speaker consistency | **Working** — prosody+LFCC voiceprint, cosine distance; abstains without enrollment |
 | Layer D context rules | **Working** — deterministic metadata risk rules |
@@ -156,7 +156,7 @@ be flagged accordingly.
 
 **Done (all measured, scripts in repo):**
 
-1. **Corpus + generalization protocol** — 4 attack generator families (Edge/Piper/SAPI/XTTS-v2 zero-shot clones) + real human diversity (16 curated + 40 LibriSpeech + 9 Hindi speaker groups), leave-one-generator-out eval (**mean held-out EER 0.11**), speaker-disjoint validation.
+1. **Corpus + generalization protocol** — 4 attack generator families (Edge/Piper/SAPI/XTTS-v2 zero-shot clones) + real human diversity (16 curated + 40 LibriSpeech + 9 Hindi speaker groups), leave-one-generator-out eval (**mean held-out EER 0.20**, two-sided protocol), speaker-disjoint validation.
 2. **Codec-aware training** — real AMR-NB/Opus ffmpeg pipelines in training; worst-case channel fused EER 0.32 → **0.14**.
 3. **Live ASR intent pipeline** — whisper medium (RTF 0.11), bilingual fuzzy intent rules; **fused chunk pipeline p95 = 108 ms** against the 300 ms target (artifact 2 ms · speaker 5 ms · wav2vec2 85 ms · rest ~16 ms).
 4. **Telephony integration** — Twilio Media Streams gateway verified on simulated frames.

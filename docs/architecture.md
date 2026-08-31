@@ -150,8 +150,9 @@ from anyone's paper:
 
 - **Leave-one-generator-out (LOTO)** (`scripts/eval_loto.py`): for each attack
   family, train layer A on the other three families + human speech, test on the
-  held-out family. **Mean held-out EER 0.11** (edge 0.16 · piper 0.03 · sapi 0.06 ·
-  xtts 0.21). A detector that generalizes to generators it never saw is the
+  held-out family. **Mean held-out EER 0.20, two-sided protocol** (xtts 0.29 · sapi 0.18;
+  edge/piper in the full LOG) — the test set includes never-seen human
+  speakers alongside the held-out generator, i.e. the deployment condition. A detector that generalizes to generators it never saw is the
   whole point — a lab-only benchmark never tests this.
 - **Speaker-disjoint validation** (`scripts/train_artifact.py`): whole speaker
   groups held out. Val acc 0.85 (bonafide 0.91 / spoof 0.57) on unseen speakers
@@ -169,7 +170,7 @@ from anyone's paper:
 
 | Metric | Current (own corpus) | Target |
 |---|---|---|
-| LOTO mean held-out EER | **0.11** | < 0.06 (more generator families) |
+| LOTO mean held-out EER (two-sided) | **0.20** | < 0.10 (more generators + more human speakers) |
 | Speaker-disjoint val acc | **0.78** (bonafide 0.88) | > 0.90 (more human speakers) |
 | Fused EER (demo corpus) | **0.07** | — |
 | Telephony worst-case fused EER | **0.19** (pre-codec: 0.32) | < 0.10 |
