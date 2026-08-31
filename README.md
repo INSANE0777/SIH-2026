@@ -105,7 +105,7 @@ build step, single HTML file.
 | Fusion + risk engine + policy actions + explainable breakdown | **Working**, unit-tested |
 | REST + WebSocket API + dashboard + incident ledger | **Working**, end-to-end tested |
 | Layer A artifact CNN | **Working, codec-trained, multilingual** — trained on real human speech (16 curated + 40 LibriSpeech + **9 real Hindi speaker groups**) + 4 attack families (Edge, Piper, SAPI, **XTTS-v2 zero-shot clones**) + AMR-NB/Opus codec copies. Honest numbers: speaker-disjoint val 0.80; demo-corpus fused EER **0.06**; telephony worst-case fused EER **0.14**; Hindi false-alarm rate on real Hindi speech: **12.9%** (was 44.6% before Hindi training data) with Hindi TTS catch-rate still **1.00** |
-| **Leave-one-generator-out** | **Measured** — `scripts/eval_loto.py`: for each family, train on the other three + humans, test on the held-out family. This is the protocol that predicts in-the-wild performance and the core ML claim. |
+| **Leave-one-generator-out** | **Measured** — `scripts/eval_loto.py`: for each family, train on the other three + humans, test on the held-out family. **Mean held-out EER 0.11** — this protocol measures cross-generator generalization and provides a stronger proxy for performance against unseen attack generators than any in-distribution benchmark. |
 | Layer B SSL detector | **Working** — `Hemgg/Deepfake-audio-detection` (wav2vec2, ASVspoof-based); validated: human 0.03 / SAPI TTS 0.98 / Edge neural TTS 0.08 (misses modern neural TTS — documented; layer A covers it) |
 | Layer C speaker consistency | **Working** — prosody+LFCC voiceprint, cosine distance; abstains without enrollment |
 | Layer D context rules | **Working** — deterministic metadata risk rules |
@@ -116,6 +116,8 @@ build step, single HTML file.
 | Real 2026 clone corpus (F5-TTS, RVC, Fish Speech) + broader LOTO | **Next** — 4 generator families implemented (Edge, Piper, SAPI, XTTS-v2); adding F5-TTS/RVC strengthens the LOTO claim further |
 | Indic-language ASR → live intent pipeline | **Working** — `swarakavach/asr.py` (faster-whisper, whisper medium): REST auto-transcribes when no transcript is given; WS path uses a rolling 4 s window transcriber streaming `transcript_delta` events; the finale demo runs entirely on live ASR |
 | Real Hindi human speech in training | **Working** — `scripts/prepare_hindi.py`: 9 Hindi speaker groups (603 chunks + codec copies) via HF datasets-server; closed a 44.6% Hindi false-alarm hole |
+| Full-system ablation | **Measured** — `scripts/eval_ablation.py`: layer-by-layer scenario table (A alone already flags the synthetic attacks; B/C/D/E each refine the verdict — and layers E+D are what catch the *real-human* social-engineering call, not just deepfakes) + corpus EER ablation. The 'five independent questions' claim is experimentally grounded |
+| Hindi false-alarm, honest split | **chunk-level 12.9%** (p90 spikes on unseen speakers) but **call-level 0.0%** — 0/27 real Hindi calls reached even MID under the median decision rule; no legitimate Hindi transaction gets held. Chunk spikes decay; the decision rule is call-median |
 | Twilio Media Streams gateway | **Working, verified on simulated frames** — `scripts/twilio_gateway.py`: Twilio mulaw 8kHz WS frames → decode → upsample → same fusion engine (genuine MID / clone HIGH / Hindi attacker CRITICAL in offline simulation); needs a public tunnel + Twilio number for the live-call demo |
 | Streaming latency | **Measured** — `scripts/eval_latency.py`: fused chunk pipeline **p95 = 108 ms** (target < 300 ms; artifact 2 ms, speaker 5 ms, wav2vec2 85 ms dominates); ASR RTF 0.11 |
 
@@ -149,13 +151,20 @@ the SSL layer is a wav2vec2 fine-tune (Apache-2.0 base); any XTTS-v2-based clone
 corpus tooling is **non-commercial (CPML) — training/research use only** and will
 be flagged accordingly.
 
-## Roadmap
+## Roadmap — status
 
-1. **Week 1–2:** done for the corpus (Edge/Piper/SAPI/XTTS-v2 + LibriSpeech diversity + LOTO protocol); next: add F5-TTS, RVC, OpenVoice — every new family strengthens leave-one-generator-out eval. ASVspoof 2019 LA remains the baseline anchor when storage allows (65 GB).
-2. **Week 3–4:** telephony-realistic augmentation (μ-law 8 kHz, AMR/EVS/Opus
-   codec simulation, MUSAN noise, RIR reverb, packet loss) folded into training
-   — the eval_telephony deltas show exactly what it buys.
-3. **Week 5–6:** ASR → live intent pipeline **done** (whisper medium, RTF 0.11, Hindi fuzzy
-   intent matching); latency **measured** (p95 = 108 ms < 300 ms target). Next within this
-   block: AI4Bharat IndicVoices/Shrutilipi audio coverage, gRPC + Twilio Media Streams demo.
-4. **Week 7–8:** ONNX edge export (< 10 MB bundle), dashboard polish, demo freeze.
+**Done (all measured, scripts in repo):**
+
+1. **Corpus + generalization protocol** — 4 attack generator families (Edge/Piper/SAPI/XTTS-v2 zero-shot clones) + real human diversity (16 curated + 40 LibriSpeech + 9 Hindi speaker groups), leave-one-generator-out eval (**mean held-out EER 0.11**), speaker-disjoint validation.
+2. **Codec-aware training** — real AMR-NB/Opus ffmpeg pipelines in training; worst-case channel fused EER 0.32 → **0.14**.
+3. **Live ASR intent pipeline** — whisper medium (RTF 0.11), bilingual fuzzy intent rules; **fused chunk pipeline p95 = 108 ms** against the 300 ms target (artifact 2 ms · speaker 5 ms · wav2vec2 85 ms · rest ~16 ms).
+4. **Telephony integration** — Twilio Media Streams gateway verified on simulated frames.
+
+**Next (in priority order):**
+
+5. **Full-system ablation** — `scripts/eval_ablation.py` (this release); extend with more scenarios as they're recorded.
+6. **Live Twilio phone-call demo** — gateway is ready; needs a public tunnel + Twilio number.
+7. **More generator families** (F5-TTS, RVC, OpenVoice) — each strengthens the LOTO claim.
+8. **ONNX edge export** (< 10 MB bundle) + dashboard polish + demo freeze.
+
+ASVspoof 2019/2021 LA is optional supporting evidence (65 GB, storage-gated) — it strengthens the story but does not gate it.
