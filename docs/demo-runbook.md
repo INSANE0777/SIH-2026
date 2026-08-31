@@ -83,7 +83,7 @@ python scripts/eval_benchmarks.py
 # EER artifact 0.07 · ssl 0.51 · fused 0.07 (full corpus)
 
 python scripts/eval_loto.py     # leave-one-generator-out — the core claim
-# held-out family EER: edge 0.13 · piper 0.12 · sapi 0.03 · xtts 0.23, mean 0.13
+# held-out family EER: edge 0.16 · piper 0.03 · sapi 0.06 · xtts 0.21, mean 0.11
 
 python scripts/eval_telephony.py    # REAL codec sweep (AMR-NB/Opus/PL)
 # fused EER: clean 0.08 -> worst case 0.19 (codec-trained; pre-codec was 0.15 -> 0.32)
