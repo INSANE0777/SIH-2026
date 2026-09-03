@@ -4,8 +4,13 @@ Families (for leave-one-generator-out evaluation):
   - edge     Microsoft Edge neural TTS (en-IN, hi-IN, en-US, en-GB voices)
   - piper    local neural TTS (hi-IN pratham/priyamvada, en-US lessac)
   - sapi     Windows SAPI concatenative TTS
+  - sarvam   Sarvam AI Bulbul v3 — INDIAN TTS, 11 languages, 30+ voices
+             (env-gated: set SARVAM_API_KEY; the 'made in India, tested against
+             made in India' attack family — API verified: client.text_to_speech
+             .convert(model='bulbul:v3', text=..., language_code='hi-IN',
+             speaker=..., speech_sample_rate=16000, output_audio_codec='wav'))
   - xtts     XTTS-v2 zero-shot VOICE CLONES of real speakers (the key attack;
-             CPML non-commercial — research/training corpus use, documented)
+             CPML non-commercial — training-corpus use only, documented)
 
 Attack scripts: social-engineering transfer demands (EN + HI Devanagari),
 matching the fraud scenario the PS describes.
@@ -107,6 +112,36 @@ def gen_sapi(out: Path) -> list[Path]:
     return files
 
 
+def gen_sarvam(out: Path) -> list[Path]:
+    """Sarvam AI Bulbul v3 — the Indian TTS attack family (11 Indic languages).
+    Env-gated: requires SARVAM_API_KEY. Skips with a message otherwise."""
+    import os
+    key = os.environ.get("SARVAM_API_KEY")
+    if not key:
+        print("  [sarvam] skipped (set SARVAM_API_KEY to add the Indian TTS family)")
+        return []
+    import base64
+
+    from sarvamai import SarvamAI
+
+    client = SarvamAI(api_subscription_key=key)
+    speakers = {"shubh": "hi-IN", "ritu": "hi-IN", "aditya": "en-IN", "priya": "en-IN"}
+    files = []
+    for voice, lang in speakers.items():
+        hi_texts = [2, 3]
+        for i, text in enumerate(SCRIPTS):
+            if (i in hi_texts) != lang.startswith("hi"):
+                continue
+            d = out / f"sarvam_{voice}_{i}.wav"
+            if not d.exists():
+                r = client.text_to_speech.convert(
+                    model="bulbul:v3", text=text, language_code=lang, speaker=voice,
+                    speech_sample_rate=16000, output_audio_codec="wav")
+                d.write_bytes(base64.b64decode(r.audios[0]))
+            files.append(d)
+    return files
+
+
 def gen_xtts(out: Path, skip: bool) -> list[Path]:
     if skip:
         print("  [xtts] skipped (--skip-xtts)")
@@ -157,6 +192,7 @@ def main():
     for fam, fn in [("edge", lambda: gen_edge(out / "edge")),
                     ("piper", lambda: gen_piper(out / "piper", Path(args.piper_dir))),
                     ("sapi", lambda: gen_sapi(out / "sapi")),
+                    ("sarvam", lambda: gen_sarvam(out / "sarvam")),
                     ("xtts", lambda: gen_xtts(out / "xtts", args.skip_xtts))]:
         (out / fam).mkdir(exist_ok=True)
         print(f"generating family: {fam}")
