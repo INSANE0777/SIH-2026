@@ -93,7 +93,8 @@ python scripts/eval_benchmarks.py
 # EER artifact 0.07 · ssl 0.51 · fused 0.07 (full corpus)
 
 python scripts/eval_loto.py     # leave-one-generator-out — the core claim
-# two-sided protocol (unseen attacks + unseen humans): mean 0.20 (xtts 0.29)
+# two-sided protocol (unseen attacks + unseen humans), 5 families incl. Sarvam:
+# mean 0.225 · sarvam held-out 0.082 · sapi 0.091 · edge/xtts ~0.3 (hardest: neural vocoders)
 
 python scripts/eval_telephony.py    # REAL codec sweep (AMR-NB/Opus/PL)
 # fused EER: clean 0.08 -> worst case 0.19 (codec-trained; pre-codec was 0.15 -> 0.32)
