@@ -267,7 +267,13 @@ export default function Dashboard() {
       const iv = setInterval(() => {
         if (demoAbort.current || i >= pcm.length) return;
         const ch = pcm.slice(i, Math.min(i + 16000, pcm.length));
-        if (ws.readyState === 1) ws.send(Float32Array.from(ch).buffer);
+        if (ws.readyState === 1) {
+          // backend WS expects PCM16LE (same as the mic path) — sending raw
+          // Float32 bytes decodes as garbage on the server (all-LOW bug)
+          const pcm16 = new Int16Array(ch.length);
+          for (let j = 0; j < ch.length; j++) pcm16[j] = Math.max(-32768, Math.min(32767, ch[j] * 32767));
+          ws.send(pcm16.buffer);
+        }
         i += 16000;
       }, 1000);
 
