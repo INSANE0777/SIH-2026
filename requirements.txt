@@ -12,5 +12,6 @@ edge-tts>=6.1
 piper-tts>=1.2
 TTS>=0.22,<0.23
 faster-whisper>=1.0
+tokenizers>=0.19,<0.20   # transformers 4.42 requires 0.19.x (5.x upgrade breaks the stack)
 onnx>=1.16
 onnxruntime>=1.18

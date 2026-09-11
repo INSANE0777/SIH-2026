@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "swarakavach",
+      "runtimeExecutable": "uvicorn",
+      "runtimeArgs": ["swarakavach.server:app", "--port", "8000"],
+      "cwd": "C:\\SIH\\SIH-2026",
+      "port": 8000
+    }
+  ]
+}

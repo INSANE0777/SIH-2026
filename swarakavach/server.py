@@ -33,6 +33,24 @@ app = FastAPI(title="SwaraKavach", version="0.1.0",
 SESSIONS: dict[str, dict] = {}
 
 
+@app.on_event("startup")
+def _warm_models():
+    """Preload the ASR model in a background thread — otherwise the first demo
+    call stalls ~36 s while whisper loads (perceived as 'stuck')."""
+    import threading
+
+    def _warm():
+        try:
+            import numpy as _np
+            from . import asr as _asr
+            _asr.transcribe(_np.zeros(16000, dtype=_np.float32))
+            print("[warmup] ASR ready")
+        except Exception as e:
+            print(f"[warmup] ASR preload skipped: {str(e)[:120]}")
+
+    threading.Thread(target=_warm, daemon=True).start()
+
+
 def run_session(wav: np.ndarray, context: dict | None, speaker_id: str | None,
                 session_id: str | None = None, transcript: str | None = None,
                 asr: bool = True) -> dict:
