@@ -8,11 +8,15 @@ import numpy as np
 
 from .. import config
 
-_state = {"model": None, "fx": None, "spoof_idx": None, "failed": False}
+_state = {"model": None, "fx": None, "spoof_idx": None, "failed_at": 0.0}
 
 
 def _load():
-    if _state["failed"]:
+    import time
+
+    # a transient failure (HF hiccup, memory pressure at boot) must not kill the
+    # layer for the process lifetime — retry after a 30 s cooldown
+    if _state["failed_at"] and time.time() - _state["failed_at"] < 30:
         return False
     if _state["model"] is not None:
         return True
@@ -32,9 +36,11 @@ def _load():
             spoof = [i for i, l in id2label.items()
                      if any(k in str(l).lower() for k in ("spoof", "fake", "aivoice", "synthetic"))]
             _state["spoof_idx"] = spoof[0] if spoof else 1
+        _state["failed_at"] = 0.0
         return True
-    except Exception:
-        _state["failed"] = True
+    except Exception as e:
+        print(f"[ssl] load failed (retry in 30 s): {str(e)[:200]}")
+        _state["failed_at"] = time.time()
         return False
 
 
