@@ -29,6 +29,12 @@ export default function Dashboard() {
   const [speakerId, setSpeakerId] = useState("");
   const [manualTr, setManualTr] = useState("");
   const [streaming, setStreaming] = useState(false);
+  const [demoCalls, setDemoCalls] = useState([]);
+  const [demoRunning, setDemoRunning] = useState(false);
+  const [demoIdx, setDemoIdx] = useState(-1);
+  const [demoVerdicts, setDemoVerdicts] = useState({});
+  const demoAbort = useRef(false);
+  const audioCtxRef = useRef(null);
 
   const wsRef = useRef(null);
   const micRef = useRef(null);
@@ -224,6 +230,87 @@ export default function Dashboard() {
     [speakerId, manualTr, showFinal, addLog]
   );
 
+  // ---- finale demo: play each scenario call aloud + stream it for live analysis ----
+  const runDemoCall = useCallback((call) => {
+    return new Promise(async (resolve) => {
+      if (demoAbort.current) return resolve(null);
+      setDemoIdx(call.id);
+      addLog(`demo call: ${call.name}`);
+      trajRef.current = [];
+      setTraj([]);
+      setFinalV(null);
+
+      // fetch + decode audio
+      const buf = await (await fetch(call.url)).arrayBuffer();
+      audioCtxRef.current = audioCtxRef.current || new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+      const actx = audioCtxRef.current;
+      const decoded = await actx.decodeAudioData(buf.slice(0));
+      const pcm = decoded.getChannelData(0);
+
+      // WS session for this call
+      const ws = new WebSocket(`ws://127.0.0.1:8000/v1/stream?speaker_id=${encodeURIComponent(speakerId || "")}&context=${CTX}`);
+      await new Promise((res) => { ws.onopen = res; });
+
+      let finalResolve;
+      const finalP = new Promise((res) => { finalResolve = res; });
+      ws.onmessage = (e) => {
+        const m = JSON.parse(e.data);
+        m.final ? (showFinal(m), finalResolve(m)) : onEvent(m);
+      };
+
+      // play aloud + stream chunks at real-time pace
+      const src_ = actx.createBufferSource();
+      src_.buffer = decoded;
+      src_.connect(actx.destination);
+      src_.start();
+      let i = 0;
+      const iv = setInterval(() => {
+        if (demoAbort.current || i >= pcm.length) return;
+        const ch = pcm.slice(i, Math.min(i + 16000, pcm.length));
+        if (ws.readyState === 1) ws.send(Float32Array.from(ch).buffer);
+        i += 16000;
+      }, 1000);
+
+      src_.onended = async () => {
+        clearInterval(iv);
+        await new Promise((r) => setTimeout(r, 1200)); // trailing chunks + server finalize
+        if (ws.readyState === 1) ws.send("END");
+        const final = await Promise.race([finalP, new Promise((r) => setTimeout(() => r(null), 8000))]);
+        clearInterval(iv);
+        try { ws.close(); } catch {}
+        resolve(final);
+      };
+    });
+  }, [addLog, onEvent, showFinal, speakerId]);
+
+  const runDemo = useCallback(async () => {
+    if (demoRunning) return;
+    demoAbort.current = false;
+    setDemoRunning(true);
+    setDemoVerdicts({});
+    addLog("=== FINALE DEMO STARTED ===");
+    for (const call of demoCalls) {
+      if (demoAbort.current) break;
+      const final = await runDemoCall(call);
+      setDemoVerdicts((v) => ({ ...v, [call.id]: final ? final.level : "—" }));
+      await new Promise((r) => setTimeout(r, 1200));
+    }
+    setDemoIdx(-1);
+    setDemoRunning(false);
+    addLog("=== FINALE DEMO COMPLETE ===");
+  }, [demoRunning, demoCalls, runDemoCall, addLog]);
+
+  const stopDemo = useCallback(() => {
+    demoAbort.current = true;
+    setDemoRunning(false);
+    setDemoIdx(-1);
+    addLog("demo stopped by user", true);
+  }, [addLog]);
+
+  useEffect(() => {
+    fetch("/demo/list").then((r) => r.json()).then((d) => setDemoCalls(d.calls || [])).catch(() => {});
+  }, []);
+
   // waveform draw loop
   useEffect(() => {
     const iv = setInterval(() => {
@@ -275,7 +362,32 @@ export default function Dashboard() {
 
       <div className="main">
         <section className="card">
-          <h2>Call Channel</h2>
+          <h2>Finale Demo</h2>
+          {demoCalls.length === 0 ? (
+            <div className="status">no scenario files — run scripts/make_demo_data.py</div>
+          ) : (
+            <>
+              <div style={{ marginBottom: 10 }}>
+                {demoCalls.map((c, i) => (
+                  <div key={c.id} className="ctxRow" style={{ opacity: demoIdx === -1 || demoVerdicts[c.id] ? 1 : demoRunning && demoCalls[demoIdx] && demoCalls[demoIdx].id === c.id ? 1 : 0.55 }}>
+                    <span className="k" style={demoIdx === i ? { color: "var(--acc)", fontWeight: 600 } : {}}>{c.name}</span>
+                    <span className="v" style={{ color: demoVerdicts[c.id] ? (demoVerdicts[c.id].includes("CRIT") || demoVerdicts[c.id].includes("HIGH") ? "#dc2626" : "#059669") : "var(--faint)" }}>
+                      {demoVerdicts[c.id] || (demoRunning && demoIdx === i ? "RUNNING…" : "·")}
+                    </span>
+                  </div>
+                ))}
+              </div>
+              <div className="row">
+                {demoRunning ? (
+                  <button className="rec" onClick={stopDemo}>Stop Demo</button>
+                ) : (
+                  <button onClick={runDemo}>Run Demo — 4 Calls</button>
+                )}
+              </div>
+              <div className="hint">Plays each scenario call out loud through your speakers while the full analysis pipeline scores it live. Turn sound ON.</div>
+            </>
+          )}
+          <h2 className="mt">Call Channel</h2>
           <div className="row">
             <button className={streaming ? "rec" : ""} onClick={toggleMic}>
               {streaming ? "Stop Live Analysis" : "Start Live Analysis"}
