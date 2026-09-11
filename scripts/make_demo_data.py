@@ -175,13 +175,19 @@ def main():
         w.writerows(rows)
 
     # ---- finale scenario ----
-    # genuine call = real human (the 'regional manager' voiceprint to enroll)
-    manager = load_wav(humans[0])[: 6 * SR]
+    # genuine call = real human (the 'regional manager' voiceprint to enroll).
+    # TEAM PERSONALIZATION: drop a 10 s recording of a teammate at
+    # data/human/custom_manager.wav — it becomes the demo's genuine manager
+    # voice (and its XTTS clone the attack), replacing the jfk stand-in.
+    custom = config.DATA_DIR / "human" / "custom_manager.wav"
+    mgr_src = custom if custom.exists() and custom.stat().st_size > 1000 else humans[0]
+    print(f"demo manager voice: {mgr_src.stem}")
+    manager = load_wav(mgr_src)[: 6 * SR]
     save_wav(out / "scenario" / "manager_real.wav", manager, SR)
     # cloned manager = REAL zero-shot voice clone (XTTS-v2) of the enrolled
     # manager when the clone corpus exists; falls back to neural TTS / vocoder.
     clone = out / "scenario" / "manager_clone.wav"
-    mgr_stem = humans[0].stem
+    mgr_stem = mgr_src.stem
     xtts_clone = (config.DATA_DIR / "clone-corpus" / "xtts" / f"xtts_{mgr_stem}_1.wav")
     if xtts_clone.exists():
         save_wav(clone, load_wav(xtts_clone), SR)
